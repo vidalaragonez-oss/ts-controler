@@ -157,19 +157,23 @@
       main {
         padding: 20px 12px;
       }
+
       .client-grid {
         grid-template-columns: 1fr;
       }
+
       .panel-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 16px;
       }
-      .panel-header > div:last-child {
+
+      .panel-header>div:last-child {
         width: 100%;
         justify-content: space-between;
         gap: 8px;
       }
+
       .btn-add-main {
         flex: 1;
         justify-content: center;
@@ -564,9 +568,9 @@
 
     /* Ajustes para Filtros no Mobile */
     .filter-row {
-      display: grid; 
-      grid-template-columns: 1fr auto; 
-      gap: 12px; 
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
       margin-bottom: 20px;
     }
 
@@ -574,6 +578,7 @@
       .filter-row {
         grid-template-columns: 1fr;
       }
+
       .filter-row .select-wrapper {
         min-width: 0 !important;
         width: 100%;
@@ -1111,6 +1116,7 @@
         left: 16px;
         bottom: 16px;
       }
+
       .toast {
         max-width: none;
         width: 100%;
@@ -1231,8 +1237,13 @@
       }
 
       @keyframes modalSlideUp {
-        from { transform: translateY(100%); }
-        to { transform: translateY(0); }
+        from {
+          transform: translateY(100%);
+        }
+
+        to {
+          transform: translateY(0);
+        }
       }
 
       .modal-overlay {
@@ -1241,7 +1252,8 @@
       }
 
       .modal-actions {
-        flex-direction: column-reverse; /* Cancelar embaixo no mobile */
+        flex-direction: column-reverse;
+        /* Cancelar embaixo no mobile */
         gap: 8px;
       }
 
@@ -1251,13 +1263,13 @@
       }
 
       .header-badge {
-        display: none; 
+        display: none;
       }
 
       .logo {
         font-size: 1rem;
       }
-      
+
       .logo-icon {
         width: 32px;
         height: 32px;
