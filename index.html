@@ -79,7 +79,7 @@
       background: rgba(17, 16, 16, .85);
       backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--border);
-      padding: 0 clamp(16px, 4vw, 48px);
+      padding: 0 clamp(12px, 3vw, 40px);
       height: 64px;
       display: flex;
       align-items: center;
@@ -154,8 +154,29 @@
     }
 
     @media (max-width: 768px) {
+      main {
+        padding: 20px 12px;
+      }
+
       .client-grid {
         grid-template-columns: 1fr;
+      }
+
+      .panel-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+      }
+
+      .panel-header>div:last-child {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .btn-add-main {
+        flex: 1;
+        justify-content: center;
       }
     }
 
@@ -470,6 +491,7 @@
       display: flex;
       gap: 12px;
       margin-top: 8px;
+      flex-wrap: wrap;
     }
 
     .stat-item {
@@ -542,6 +564,25 @@
       color: var(--muted);
       font-size: .85rem;
       pointer-events: none;
+    }
+
+    /* Ajustes para Filtros no Mobile */
+    .filter-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    @media (max-width: 500px) {
+      .filter-row {
+        grid-template-columns: 1fr;
+      }
+
+      .filter-row .select-wrapper {
+        min-width: 0 !important;
+        width: 100%;
+      }
     }
 
     /* Cards de cliente */
@@ -805,6 +846,7 @@
       padding: 5px 10px;
       font-size: .78rem;
       font-weight: 500;
+      max-width: 100%;
     }
 
     .platform-chip-icon {
@@ -821,6 +863,10 @@
 
     .platform-chip-campaign {
       color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
     }
 
     .chip-sep {
@@ -1055,12 +1101,26 @@
     @keyframes toastIn {
       from {
         opacity: 0;
-        transform: translateX(30px);
+        transform: translateY(20px);
       }
 
       to {
         opacity: 1;
-        transform: translateX(0);
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 600px) {
+      #toast-container {
+        right: 16px;
+        left: 16px;
+        bottom: 16px;
+      }
+
+      .toast {
+        max-width: none;
+        width: 100%;
+        text-align: center;
       }
     }
 
@@ -1156,7 +1216,63 @@
       }
 
       .client-card {
-        padding: 16px;
+        padding: 18px;
+        min-height: auto;
+      }
+
+      .client-name {
+        font-size: 1rem;
+      }
+
+      .modal {
+        padding: 24px 16px;
+        margin-bottom: 20px;
+        border-radius: var(--radius) var(--radius) 0 0;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        max-width: 100%;
+        animation: modalSlideUp .3s ease;
+      }
+
+      @keyframes modalSlideUp {
+        from {
+          transform: translateY(100%);
+        }
+
+        to {
+          transform: translateY(0);
+        }
+      }
+
+      .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+      }
+
+      .modal-actions {
+        flex-direction: column-reverse;
+        /* Cancelar embaixo no mobile */
+        gap: 8px;
+      }
+
+      .modal-actions button {
+        width: 100%;
+        padding: 14px;
+      }
+
+      .header-badge {
+        display: none;
+      }
+
+      .logo {
+        font-size: 1rem;
+      }
+
+      .logo-icon {
+        width: 32px;
+        height: 32px;
       }
     }
   </style>
@@ -1201,7 +1317,7 @@
       </div>
 
       <!-- Filtros -->
-      <div style="display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-bottom: 20px;">
+      <div class="filter-row">
         <div class="search-wrap" style="margin-bottom: 0;">
           <span class="search-icon">🔎</span>
           <input type="text" id="search-input" placeholder="Buscar cliente por nome..." oninput="renderClients()" />
