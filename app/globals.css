@@ -1,23 +1,14 @@
-@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* SCROLL FIX MOBILE */
 html,
 body {
-  /* Garante que APENAS o documento faça scroll — sem containers filhos presos */
-  height: auto;
+  /* CRÍTICO: sem height fixo, sem overflow hidden.
+     O body é o único scroller da página. */
+  height: auto !important;
   overflow-x: hidden;
   overscroll-behavior-y: none;
 }
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html { scroll-behavior: smooth; }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #111010; }
