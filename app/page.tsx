@@ -503,6 +503,16 @@ export default function Home() {
 
   useEffect(() => { setClients(loadClients()); }, []);
 
+  // Garante que o body nunca fique travado — sobrepõe qualquer CSS externo
+  useEffect(() => {
+    document.documentElement.style.height = "auto";
+    document.documentElement.style.overflow = "visible";
+    document.body.style.height = "auto";
+    document.body.style.overflow = "visible";
+    document.body.style.overflowX = "hidden";
+    document.body.style.position = "static";
+  }, []);
+
   const persist = (list: Client[]) => { setClients(list); saveClients(list); };
 
   const activeClient = clients.find((c) => c.id === clienteAtivo) ?? null;
@@ -557,10 +567,8 @@ export default function Home() {
       {/* ── Header ── */}
       <header className="sticky top-0 z-50 shrink-0 h-16 flex items-center justify-between px-4 md:px-8 bg-[#111010]/90 backdrop-blur-xl border-b border-[#2e2c29]">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center overflow-hidden shrink-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="TS Controler" className="h-8 w-auto mr-2" />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="TS Controler" className="h-8 w-auto" />
           <span className="font-bold text-[1.05rem] tracking-tight">TS <span className="text-amber-500">Controler</span></span>
         </div>
         <div className="flex items-center gap-2">
