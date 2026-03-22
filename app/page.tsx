@@ -303,59 +303,73 @@ function LeadTable({ leads, searchTerm, platformFilter }: LeadTableProps) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-[#2e2c29]">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-[#2e2c29] bg-[#1a1917]">
-            {["Nome", "Telefone", "Data", "Plataforma"].map((h) => (
-              <th
-                key={h}
-                className="px-4 py-3 text-left text-xs font-700 uppercase tracking-widest text-[#7a7268] whitespace-nowrap"
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((lead, idx) => (
-            <tr
-              key={lead.id}
-              className={`
-                border-b border-[#2e2c29]/50 transition-colors duration-150
-                hover:bg-amber-500/5
-                ${idx % 2 === 0 ? "bg-[#201f1d]" : "bg-[#1c1b19]"}
-              `}
-            >
-              <td className="px-4 py-3 font-medium text-[#e8e2d8] max-w-[200px] truncate">
-                {lead.nome || "—"}
-              </td>
-              <td className="px-4 py-3 text-[#7a7268] font-mono text-xs whitespace-nowrap">
-                {lead.telefone || "—"}
-              </td>
-              <td className="px-4 py-3 text-[#7a7268] whitespace-nowrap">
-                {lead.data || "—"}
-              </td>
-              <td className="px-4 py-3">
-                {lead.plataforma ? (
-                  <span
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${getPlatformStyle(
-                      lead.plataforma
-                    )}`}
-                  >
-                    <span className="text-[10px]">
-                      {getPlatformIcon(lead.plataforma)}
-                    </span>
-                    {lead.plataforma}
-                  </span>
-                ) : (
-                  <span className="text-[#7a7268]">—</span>
-                )}
-              </td>
+    /*
+     * SCROLL FIX (mobile):
+     * - "overscroll-x-contain" prevents the horizontal scroll inside the table
+     *   from bubbling up and locking the vertical page scroll on iOS/Android.
+     * - "-webkit-overflow-scrolling: touch" (via style prop) enables momentum
+     *   scrolling on iOS without creating an isolated scroll prison.
+     * - The outer rounded border is kept via a wrapper div since the scrollable
+     *   element itself can't clip border-radius reliably on all mobile browsers.
+     */
+    <div className="rounded-xl border border-[#2e2c29] overflow-hidden">
+      <div
+        className="overflow-x-auto overscroll-x-contain"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[#2e2c29] bg-[#1a1917]">
+              {["Nome", "Telefone", "Data", "Plataforma"].map((h) => (
+                <th
+                  key={h}
+                  className="px-4 py-3 text-left text-xs uppercase tracking-widest text-[#7a7268] whitespace-nowrap font-semibold"
+                >
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filtered.map((lead, idx) => (
+              <tr
+                key={lead.id}
+                className={`
+                  border-b border-[#2e2c29]/50 transition-colors duration-150
+                  hover:bg-amber-500/5
+                  ${idx % 2 === 0 ? "bg-[#201f1d]" : "bg-[#1c1b19]"}
+                `}
+              >
+                <td className="px-4 py-3 font-medium text-[#e8e2d8] max-w-[180px] truncate">
+                  {lead.nome || "—"}
+                </td>
+                <td className="px-4 py-3 text-[#7a7268] font-mono text-xs whitespace-nowrap">
+                  {lead.telefone || "—"}
+                </td>
+                <td className="px-4 py-3 text-[#7a7268] whitespace-nowrap">
+                  {lead.data || "—"}
+                </td>
+                <td className="px-4 py-3">
+                  {lead.plataforma ? (
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${getPlatformStyle(
+                        lead.plataforma
+                      )}`}
+                    >
+                      <span className="text-[10px]">
+                        {getPlatformIcon(lead.plataforma)}
+                      </span>
+                      {lead.plataforma}
+                    </span>
+                  ) : (
+                    <span className="text-[#7a7268]">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -398,10 +412,13 @@ export default function Home() {
   ).sort();
 
   return (
-    <div className="min-h-screen bg-[#111010] text-[#e8e2d8] font-sans">
-      {/* Ambient background */}
+    // SCROLL FIX: wrapper is block-level with no height/overflow constraints.
+    // Only the native document scroll is used — no nested scroll contexts.
+    <div className="w-full bg-[#111010] text-[#e8e2d8] font-sans" style={{ overscrollBehavior: "none" }}>
+      {/* Ambient background — fixed but pointer-events-none, no overflow side-effects */}
       <div
         className="pointer-events-none fixed inset-0 z-0"
+        aria-hidden="true"
         style={{
           background:
             "radial-gradient(ellipse 60% 40% at 10% 0%, rgba(245,166,35,0.07) 0%, transparent 60%), radial-gradient(ellipse 40% 30% at 90% 100%, rgba(245,166,35,0.05) 0%, transparent 60%)",
@@ -422,7 +439,7 @@ export default function Home() {
       </header>
 
       {/* ── Main ── */}
-      <main className="relative z-10 max-w-5xl mx-auto px-4 md:px-8 py-8 space-y-8">
+      <main className="relative max-w-5xl mx-auto px-4 md:px-8 py-8 space-y-8">
 
         {/* ── Section: Operação + Upload ── */}
         <section className="space-y-5">
@@ -548,36 +565,4 @@ export default function Home() {
                 ))}
               </select>
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268] text-xs">
-                ▾
-              </span>
-            </div>
-          </div>
-
-          {/* Table */}
-          <LeadTable
-            leads={currentLeads}
-            searchTerm={searchTerm}
-            platformFilter={platformFilter}
-          />
-
-          {/* Export hint */}
-          {currentLeads.length > 0 && (
-            <div className="rounded-xl bg-amber-500/8 border border-amber-500/20 p-4 flex items-center gap-3">
-              <span className="text-2xl">📄</span>
-              <div>
-                <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider">
-                  Próximo passo
-                </p>
-                <p className="text-xs text-[#7a7268] mt-0.5">
-                  Exportação de PDF com coluna de Feedback editável — disponível
-                  no módulo de Exportação (em breve).
-                </p>
-              </div>
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
-  );
-}
-
+          
