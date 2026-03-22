@@ -547,7 +547,7 @@ export default function Home() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div id="root-layout" className="flex flex-col min-h-screen bg-[#111010] text-[#e8e2d8]">
+    <div id="root-layout" className="min-h-screen bg-[#111010] text-[#e8e2d8]">
 
       {/* Ambient glow */}
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 select-none" style={{
@@ -559,7 +559,7 @@ export default function Home() {
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center overflow-hidden shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/Logo PNG.png" alt="Logo" className="h-8 w-auto object-contain" />
+            <img src="/logo.png" alt="TS Controler" className="h-8 w-auto mr-2" />
           </div>
           <span className="font-bold text-[1.05rem] tracking-tight">TS <span className="text-amber-500">Controler</span></span>
         </div>
@@ -591,7 +591,7 @@ export default function Home() {
       </header>
 
       {/* ── Main ── */}
-      <main className="flex-1 w-full max-w-6xl mx-auto px-4 md:px-8 py-6 pb-16">
+      <main className="w-full max-w-6xl mx-auto px-4 md:px-8 py-6 pb-24">
 
         {/* ══════════════════════════════════════
             TELA A: LISTA DE CLIENTES
@@ -642,7 +642,7 @@ export default function Home() {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-24">
                 {filteredClients.map((c) => (
                   <ClientCard
                     key={c.id}
