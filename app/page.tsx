@@ -568,8 +568,30 @@ export default function Home() {
       <header className="sticky top-0 z-50 shrink-0 h-16 flex items-center justify-between px-4 md:px-8 bg-[#111010]/90 backdrop-blur-xl border-b border-[#2e2c29]">
         <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="TS Controler" className="h-8 w-auto" />
-          <span className="font-bold text-[1.05rem] tracking-tight">TS <span className="text-amber-500">Controler</span></span>
+          <img
+            src="/logo.png"
+            alt="TS Controler"
+            className="h-9 w-auto"
+            onError={(e) => {
+              // Se a imagem não carregar, substitui pelo SVG da ave em âmbar
+              const target = e.currentTarget;
+              target.style.display = "none";
+              const svg = target.nextElementSibling as HTMLElement | null;
+              if (svg) svg.style.display = "flex";
+            }}
+          />
+          {/* Fallback SVG — oculto por padrão, aparece só se a imagem falhar */}
+          <div
+            style={{ display: "none" }}
+            className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 items-center justify-center shrink-0"
+          >
+            <svg viewBox="0 0 100 100" className="w-6 h-6" fill="none">
+              <path d="M15 20 Q30 10 55 30 Q70 15 90 12 Q80 35 65 38 Q80 50 85 68 Q65 55 55 60 Q45 72 35 80 Q38 65 30 58 Q18 55 10 65 Q12 48 25 42 Q10 35 15 20Z" fill="#f5a623" />
+            </svg>
+          </div>
+          <span className="font-bold text-[1.05rem] tracking-tight">
+            TS <span className="text-amber-500">Controler</span>
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {/* Botão Voltar — só aparece na tela de leads */}
