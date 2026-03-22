@@ -1,4 +1,4 @@
- "use client";
+"use client";
 
 /**
  * ARQUITETURA DE SCROLL — REGRAS ABSOLUTAS:
