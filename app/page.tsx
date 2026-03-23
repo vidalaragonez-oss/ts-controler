@@ -567,23 +567,8 @@ export default function Home() {
       {/* ── Header ── */}
       <header className="sticky top-0 z-50 shrink-0 h-16 flex items-center justify-between px-4 md:px-8 bg-[#111010]/90 backdrop-blur-xl border-b border-[#2e2c29]">
         <div className="flex items-center gap-2.5">
-          {/* Logo SVG inline — sem dependência de arquivo externo */}
-          <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-            <svg viewBox="0 0 120 110" className="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Asa esquerda */}
-              <path d="M8 48 Q2 28 18 14 Q28 6 44 18 Q34 30 30 46 Q20 44 8 48Z" fill="#f5a623"/>
-              {/* Corpo central */}
-              <path d="M44 18 Q58 8 78 16 Q92 6 112 4 Q104 28 88 34 Q96 46 100 62 Q80 52 68 58 Q56 68 46 80 Q48 66 40 56 Q30 52 18 62 Q22 46 36 40 Q40 30 44 18Z" fill="#f5a623"/>
-              {/* Cauda direita */}
-              <path d="M88 34 Q106 38 114 52 Q104 50 96 58 Q90 50 88 34Z" fill="#f5a623"/>
-              {/* Bico */}
-              <path d="M18 62 Q10 70 8 80 Q14 72 22 74 Q20 68 18 62Z" fill="#f5a623"/>
-              {/* Reflexo asa */}
-              <path d="M30 46 Q24 54 20 62 Q28 58 36 60 Q34 52 30 46Z" fill="rgba(255,255,255,0.12)"/>
-              {/* Reflexo cauda */}
-              <path d="M68 58 Q74 66 72 76 Q66 68 62 70 Q64 64 68 58Z" fill="rgba(255,255,255,0.10)"/>
-            </svg>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="TS Controler" className="h-9 w-auto" />
           <span className="font-bold text-[1.05rem] tracking-tight">
             TS <span className="text-amber-500">Controler</span>
           </span>
