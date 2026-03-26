@@ -554,9 +554,35 @@ function Dropzone({ onParsed }: { onParsed: (leads: Lead[]) => void }) {
     const reader = new FileReader();
     reader.onload = e => {
       const buffer = e.target?.result as ArrayBuffer;
-      const decoder = new TextDecoder("utf-8");
+
+      // Auto-detectar encoding: tenta UTF-16 se detectar BOM ou padrão específico
+      const bytes = new Uint8Array(buffer);
+      let encoding = "utf-8";
+
+      // Detectar UTF-16 LE BOM (FF FE)
+      if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+        encoding = "utf-16le";
+      }
+      // Detectar UTF-16 BE BOM (FE FF)
+      else if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+        encoding = "utf-16be";
+      }
+      // Detectar UTF-16 sem BOM: verifica padrão de null bytes entre caracteres ASCII
+      else if (bytes.length >= 10) {
+        const hasNullPattern =
+          (bytes[1] === 0 && bytes[3] === 0 && bytes[5] === 0) || // UTF-16 LE
+          (bytes[0] === 0 && bytes[2] === 0 && bytes[4] === 0);   // UTF-16 BE
+        if (hasNullPattern) {
+          encoding = bytes[0] === 0 ? "utf-16be" : "utf-16le";
+        }
+      }
+
+      const decoder = new TextDecoder(encoding);
       let text = decoder.decode(buffer);
+
+      // Remove BOM se presente (U+FEFF)
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
       Papa.parse<Record<string,string>>(text, {
         header:true,
         skipEmptyLines: "greedy",
