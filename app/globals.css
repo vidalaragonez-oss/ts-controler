@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  /* CRÍTICO: sem height fixo, sem overflow hidden.
+     O body é o único scroller da página. */
+  height: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #111010; }
+::-webkit-scrollbar-thumb { background: #2e2c29; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #7a7268; }

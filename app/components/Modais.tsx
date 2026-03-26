@@ -1,0 +1,1024 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { motion, AnimatePresence } from "framer-motion";
+import { 
+  Plus, 
+  X, 
+  Loader2, 
+  Zap, 
+  Sparkles, 
+  Pencil, 
+  ChevronDown, 
+  User, 
+  Users, 
+  Layers, 
+  Settings, 
+  Check, 
+  Circle,
+  Activity
+} from "lucide-react";
+import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
+
+// ─── Tipos locais ─────────────────────────────────────────────────────────────
+
+export type PlatformKey = "meta" | "google" | "gls";
+
+export interface Platform {
+  key: PlatformKey;
+  label: string;
+  campaigns: string[];
+}
+
+export interface Operacao {
+  id: string;
+  nome: string;
+  created_at: string;
+}
+
+export type ClienteStatus = "ATIVO" | "INATIVO" | "SEM CAMPANHA" | "CANCELAMENTO";
+
+export interface Cliente {
+  id: string;
+  nome: string;
+  operacao_id: string;
+  gestor: string;
+  gestor_estrategico: string;
+  platforms: Platform[];
+  status: ClienteStatus;
+  created_at: string;
+  ordem?: number | null;
+  tipo_campanha?: string[] | null;
+}
+
+export interface Lead {
+  id: string;
+  nome: string;
+  email: string;
+  telefone: string;
+  data: string;
+  plataforma: string;
+  operacao?: string;
+  cliente?: string;
+  operacao_id?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── REGRA DE OURO: Definições canônicas ──────────────────────────────────────
+// Estes são os ÚNICOS nomes aceitos para plataformas e campanhas.
+// São gravados EXATAMENTE assim no campo tipo_campanha do Supabase.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const PLATFORM_DEFS: {
+  key: PlatformKey;
+  label: string;
+  campaigns: string[];
+}[] = [
+  {
+    key: "meta",
+    label: "Meta Ads",
+    campaigns: [
+      "Direct Messages (Meta)",
+      "Engagement (Meta)",
+      "Lead Generation (Meta)",
+      "Leads Form (Meta)",
+      "WhatsApp Leads",
+      "Website Traffic",
+      "Sales/Conversion",
+    ],
+  },
+  {
+    key: "google",
+    label: "Google Ads",
+    campaigns: [
+      "Search Network (G-Ads)",
+      "Performance Max",
+      "Display Network",
+      "YouTube Ads",
+      "App Install",
+    ],
+  },
+  {
+    key: "gls",
+    label: "Google Local Services",
+    campaigns: [
+      "Local Service Ads (GLS)",
+      "Local Awareness",
+    ],
+  },
+];
+
+// Lookup: dado um nome de campanha, retorna a PlatformKey pai
+export function getCampanhaPlatformKey(campanha: string): PlatformKey | null {
+  for (const def of PLATFORM_DEFS) {
+    if (def.campaigns.includes(campanha)) return def.key;
+  }
+  return null;
+}
+
+// ─── SVGs ─────────────────────────────────────────────────────────────────────
+
+export const PLATFORM_SVG: Record<PlatformKey, React.ReactNode> = {
+  meta: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <path d="M24 12.073c0-6.627-5.372-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" fill="#1877F2" />
+    </svg>
+  ),
+  google: (
+    <svg width="14" height="14" viewBox="0 0 24 24">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05" />
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+    </svg>
+  ),
+  gls: (
+    <svg width="14" height="14" viewBox="0 0 48 48" fill="none">
+      <circle cx="24" cy="24" r="20" fill="#34A853" />
+      <path d="M34.5858 17.5858L21.4142 30.7574L14.8284 24.1716L12 27L21.4142 36.4142L37.4142 20.4142L34.5858 17.5858Z" fill="white" />
+    </svg>
+  ),
+};
+
+const PLATFORM_CHIP_COLOR: Record<PlatformKey, string> = {
+  meta:   "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  google: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  gls:    "bg-purple-500/15 text-purple-400 border-purple-500/30",
+};
+
+const LEAD_PLATFORM_OPTIONS = [
+  "Meta Ads",
+  "Google Ads",
+  "Google Local Services",
+  "Elementor Form",
+  "Outro",
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MISSÃO 5: Hook — gestores filtrados por ativo_na_selecao = true ───────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function useGestoresFiltrados(enabled: boolean) {
+  const [estrategicos, setEstratégicos] = useState<string[]>([]);
+  const [trafego, setTrafego]           = useState<string[]>([]);
+  const [loading, setLoading]           = useState(false);
+
+  const fetch = useCallback(async () => {
+    if (!enabled) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("gestores")
+        .select("nome, tipo")
+        .eq("ativo_na_selecao", true)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      const rows = (data ?? []) as { nome: string; tipo: string }[];
+ 
+      setEstratégicos(rows.filter(r => r.tipo === "estrategico").map(r => r.nome));
+      setTrafego(rows.filter(r => r.tipo === "trafego").map(r => r.nome));
+    } catch (err) {
+      console.error("Erro ao buscar gestores filtrados:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [enabled]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  return { estrategicos, trafego, loading };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── HELPER: reconstrói estado de campanhas a partir de um Cliente ─────────────
+// Suporta tanto tipo_campanha[] (novo) quanto platforms[].campaigns (legado)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildInitialCamps(cliente?: Cliente): Record<PlatformKey, string[]> {
+  const result: Record<PlatformKey, string[]> = { meta: [], google: [], gls: [] };
+  if (!cliente) return result;
+
+  // Fonte primária: tipo_campanha (array canônico, formato novo)
+  if (Array.isArray(cliente.tipo_campanha) && cliente.tipo_campanha.length > 0) {
+    for (const camp of cliente.tipo_campanha) {
+      const key = getCampanhaPlatformKey(camp);
+      if (key) result[key] = [...result[key], camp];
+    }
+    if (Object.values(result).some(arr => arr.length > 0)) return result;
+  }
+
+  // Fallback: platforms[].campaigns (formato legado)
+  for (const plat of (cliente.platforms ?? [])) {
+    const def = PLATFORM_DEFS.find(d => d.key === plat.key);
+    if (def && plat.key in result) {
+      // Filtra apenas nomes canônicos para evitar strings inválidas
+      result[plat.key] = (plat.campaigns ?? []).filter(c => def.campaigns.includes(c));
+    }
+  }
+
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── COMPONENTE: PlatformCampaignSelector ─────────────────────────────────────
+// Checkboxes diretos e limpos para as campanhas de uma plataforma
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function PlatformCampaignSelector({
+  platKey,
+  selectedCamps,
+  onChange,
+}: {
+  platKey: PlatformKey;
+  selectedCamps: string[];
+  onChange: (camps: string[]) => void;
+}) {
+  const def = PLATFORM_DEFS.find(d => d.key === platKey)!;
+
+  const toggle = (camp: string) => {
+    onChange(
+      selectedCamps.includes(camp)
+        ? selectedCamps.filter(c => c !== camp)
+        : [...selectedCamps, camp]
+    );
+  };
+
+  return (
+    <div className="space-y-1">
+      {/* Barra superior: label + atalhos */}
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500/70">
+          Campanhas — {def.label}
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onChange([...def.campaigns])}
+            className="text-[9px] font-semibold text-amber-500/60 hover:text-amber-400 transition-colors"
+          >
+            ✓ Todas
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-[9px] font-semibold text-[#7a7268] hover:text-[#e8e2d8] transition-colors"
+          >
+            ✕ Limpar
+          </button>
+        </div>
+      </div>
+
+      {/* Checkboxes — 2 colunas no desktop */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        {def.campaigns.map(camp => {
+          
+          const checked = selectedCamps.includes(camp);
+          return (
+            <label
+              key={camp}
+              className="flex items-center gap-2 py-1.5 cursor-pointer group"
+            >
+              <button
+                type="button"
+                onClick={() => toggle(camp)}
+                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                  checked
+                    ? "bg-amber-500 border-amber-500"
+                    : "border-[#3a3835] group-hover:border-amber-500/40"
+                }`}
+              >
+                {checked && (
+                  <span className="text-[#111] text-[9px] font-bold leading-none">✓</span>
+                )}
+              </button>
+              {/* Nome exato da campanha */}
+              <span className={`text-xs leading-snug transition-colors ${
+                checked ? "text-[#e8e2d8] font-medium" : "text-[#7a7268] group-hover:text-[#a09890]"
+              }`}>
+                {camp}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      {selectedCamps.length > 0 && (
+        <p className="text-[9px] text-amber-500/50 pt-1.5">
+          {selectedCamps.length}/{def.campaigns.length} selecionada{selectedCamps.length !== 1 ? "s" : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL: NOVA OPERAÇÃO
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface NovaOperacaoModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSaved: (op: Operacao) => void;
+}
+
+export function NovaOperacaoModal({ open, onClose, onSaved }: NovaOperacaoModalProps) {
+  const [nome, setNome]     = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (open) setNome(""); }, [open]);
+
+  const handleSave = async () => {
+    const trimmed = nome.trim();
+    if (!trimmed) { toast.error("Informe o nome da operação."); return; }
+    setSaving(true);
+    try {
+      const { data, error } = await supabase.from("operacoes").insert({ nome: trimmed }).select().single();
+      if (error) throw error;
+      toast.success(`Operação "${trimmed}" criada!`);
+      onSaved(data as Operacao);
+      onClose();
+    } catch (err: unknown) {
+      toast.error(`Erro: ${(err as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[100]" style={{ backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }} />
+        <Dialog.Content className="fixed z-[101] inset-x-0 bottom-0 sm:inset-0 sm:flex sm:items-center sm:justify-center" onInteractOutside={onClose}>
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="w-full sm:max-w-sm bg-[#1a1917] border border-[#2e2c29] rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col"
+            >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29]">
+       
+              <Dialog.Title className="font-bold text-[#e8e2d8] flex items-center gap-2">
+                <Plus size={16} className="text-amber-500" /> Nova Operação
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] transition-colors">
+                  <X size={16} />
+                </button>
+            
+              </Dialog.Close>
+            </div>
+            <div className="px-5 py-5 space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Nome da Operação</label>
+                <input
+                 
+                  autoFocus type="text" value={nome}
+                  onChange={e => setNome(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleSave();
+                  }}
+                  placeholder="Ex: Op 04"
+                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/60 transition-colors"
+                />
+              </div>
+            </div>
+        
+            <div className="px-5 pb-5 flex gap-3">
+              <Dialog.Close asChild>
+                <button className="flex-1 py-2.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-sm font-semibold hover:text-[#e8e2d8] transition-colors">Cancelar</button>
+              </Dialog.Close>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-[#111] text-sm font-bold hover:bg-amber-400 active:scale-95 transition-all shadow-[0_4px_16px_rgba(245,166,35,0.3)] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} className="fill-current" />}
+                {saving ? "Criando..." : "Criar Operação"}
+              </button>
+            </div>
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL: NOVO / EDITAR CLIENTE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ClienteModalProps {
+  mode: "new" | "edit";
+  initial?: Cliente;
+  operacaoId: string;
+  gestoresEstrat: string[];
+  gestoresTrafego: string[];
+  onSaved: (cliente: Cliente) => void;
+  onClose: () => void;
+}
+
+export function ClienteModal({
+  mode, initial, operacaoId,
+  gestoresEstrat: gestoresEstratProp,
+  gestoresTrafego: gestoresTrafegoProp,
+  onSaved, onClose,
+}: ClienteModalProps) {
+
+  // Busca filtrada por ativo_na_selecao = true
+  const {
+    estrategicos: gestoresEstratFiltrados,
+    trafego: gestoresTrafFiltrados,
+    loading: gestoresLoading,
+  } = useGestoresFiltrados(true);
+
+  // Merge: filtrados têm prioridade; props são fallback para quando o hook ainda não carregou
+  const gestoresEstrat = gestoresEstratFiltrados.length > 0 ? gestoresEstratFiltrados : gestoresEstratProp;
+  const gestoresTraf   = gestoresTrafFiltrados.length   > 0 ? gestoresTrafFiltrados   : gestoresTrafegoProp;
+
+  const [nome,          setNome]          = useState(initial?.nome ?? "");
+  const [gestor,        setGestor]        = useState(initial?.gestor ?? "");
+  const [gestorEstrat,  setGestorEstrat]  = useState(initial?.gestor_estrategico ?? "");
+  const [status,        setStatus]        = useState<ClienteStatus>(initial?.status ?? "ATIVO");
+
+  // Plataformas ativas
+  const [activePlats, setActivePlats] = useState<Set<PlatformKey>>(
+    () => new Set((initial?.platforms ?? []).map(p => p.key))
+  );
+
+  // Campanhas por plataforma — lidas do banco ao abrir
+  const [camps, setCamps] = useState<Record<PlatformKey, string[]>>(
+    () => buildInitialCamps(initial)
+  );
+
+  const [saving, setSaving] = useState(false);
+
+  // Toggle de plataforma: ao desmarcar limpa as campanhas daquela plataforma
+  const togglePlatform = (key: PlatformKey) => {
+    setActivePlats(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        setCamps(c => ({ ...c, [key]: [] })); // limpa campanhas
+      } else {
+        next.add(key);
+      }
+      
+      return next;
+    });
+  };
+
+  // ── FIX DA MADRUGADA: Salva tipo_campanha como STRING separada por vírgula ──
+  const handleSave = async () => {
+    if (!nome.trim())  { toast.error("Informe o nome do cliente."); return; }
+    if (!gestor)       { toast.error("Selecione o Gestor de Tráfego."); return; }
+    if (!gestorEstrat) { toast.error("Selecione o Gestor Estratégico."); return; }
+
+    // platforms[]: apenas plataformas ativas, com campanhas corretas
+    const platforms: Platform[] = PLATFORM_DEFS
+      .filter(d => activePlats.has(d.key))
+      .map(d => ({ key: d.key, label: d.label, campaigns: camps[d.key] ?? [] }));
+
+    // tipo_campanha: flat array de TODOS os nomes exatos selecionados
+    const tipoCampanhaArray: string[] = PLATFORM_DEFS
+      .filter(d => activePlats.has(d.key))
+      .flatMap(d => camps[d.key] ?? []);
+
+    const payload = {
+      nome: nome.trim(),
+      operacao_id: operacaoId,
+      gestor,
+      gestor_estrategico: gestorEstrat,
+      platforms,
+      status,
+      // CONVERTE PARA TEXTO. Ex: "Lead Generation (Meta),Search Network (G-Ads)"
+      tipo_campanha: tipoCampanhaArray.length > 0 ? tipoCampanhaArray.join(',') : null,
+    };
+
+    setSaving(true);
+    try {
+      const result = mode === "new"
+        ? await supabase.from("clientes").insert(payload).select().single()
+        : await supabase.from("clientes").update(payload).eq("id", initial!.id).select().single();
+
+      if (result.error) throw result.error;
+      toast.success(mode === "new" ? `${payload.nome} cadastrado!` : "Alterações salvas!");
+      onSaved(result.data as Cliente);
+      onClose();
+    } catch (err: unknown) {
+      toast.error(`Erro ao salvar: ${(err as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center"
+      style={{ backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <motion.div
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        className="w-full sm:max-w-lg bg-[#1a1917] border border-[#2e2c29] rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col"
+        style={{ maxHeight: "92dvh" }}
+        onClick={e => e.stopPropagation()}
+      >
+    
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29] shrink-0 bg-[#111010]">
+          <div>
+            <p className="text-[0.6rem] font-bold uppercase tracking-[0.18em] text-amber-500 mb-0.5">
+              {mode === "new" ? "Cadastrar Cliente" : "Editar Cliente"}
+            </p>
+            <h2 className="font-bold text-[#e8e2d8] text-sm flex items-center gap-2">
+              {mode === "new" ? (
+                <><Sparkles size={14} className="text-amber-500" /> Novo Cliente</>
+              ) : (
+                <><Pencil size={14} className="text-amber-500" /> {initial?.nome ?? "Editar"}</>
+              )}
+            </h2>
+          </div>
+          <button onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div
+          className="flex-1 overflow-y-auto px-5 py-5 space-y-5"
+          style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
+        >
+          {/* Nome */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Nome do Cliente</label>
+            
+            <input
+              type="text" value={nome} onChange={e => setNome(e.target.value)}
+              placeholder="Ex: JAC Cosméticos"
+              className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/60 transition-colors"
+            />
+          </div>
+
+          {/* Gestor de Tráfego */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Gestor de Tráfego</label>
+            {gestoresLoading ?
+            (
+              <div className="h-10 bg-[#201f1d] border border-[#2e2c29] rounded-xl animate-pulse" />
+            ) : (
+              <div className="relative">
+                <select value={gestor} onChange={e => setGestor(e.target.value)}
+                  className="w-full appearance-none bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 pr-9 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors cursor-pointer">
+                  <option value="">Selecionar gestor</option>
+                  {gestoresTraf.map(g => <option key={g} value={g}>{g}</option>)}
+                  {/* Valor atual que pode ter sido desativado depois */}
+                  {initial?.gestor && !gestoresTraf.includes(initial.gestor) && (
+                    <option value={initial.gestor}>{initial.gestor} ↩ atual</option>
+                  )}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268]" size={14} />
+              </div>
+            )}
+          </div>
+
+          {/* Gestor Estratégico */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Gestor Estratégico</label>
+            {gestoresLoading ?
+            (
+              <div className="h-9 bg-[#201f1d] border border-[#2e2c29] rounded-xl animate-pulse" />
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {gestoresEstrat.map(g => (
+                  <button key={g} type="button" onClick={() => setGestorEstrat(g)}
+                    className={`px-4 py-1.5 rounded-full text-sm font-semibold border transition-all flex items-center gap-1.5 ${
+                      gestorEstrat === g
+                        ? g === "Duda"  ? "bg-blue-600 border-blue-500 text-white"
+                          : g === "Diego" ? "bg-purple-600 border-purple-500 text-white"
+                          : "bg-amber-500 border-amber-400 text-[#111]"
+                        : "bg-[#201f1d] border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] hover:border-[#7a7268]"
+                    }`}>
+                    <User size={13} /> {g}
+                  </button>
+                ))}
+                {/* Valor atual desativado — mantém selecionável */}
+                {initial?.gestor_estrategico && !gestoresEstrat.includes(initial.gestor_estrategico) && (
+                  <button type="button" onClick={() => setGestorEstrat(initial.gestor_estrategico)}
+                    className={`px-4 py-1.5 rounded-full text-sm font-semibold border transition-all opacity-60 ${
+                      gestorEstrat === initial.gestor_estrategico
+                        ? "bg-amber-500 border-amber-400 text-[#111]"
+                        : "bg-[#201f1d] border-[#2e2c29] text-[#7a7268]"
+                    }`}>
+                    👤 {initial.gestor_estrategico} ↩
+                  </button>
+               )}
+                {gestoresEstrat.length === 0 && (
+                  <p className="text-xs text-[#7a7268] italic py-1">Nenhum gestor estratégico com seleção ativa.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Status — apenas edição */}
+          {mode === "edit" && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Status</label>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { value: "ATIVO"        as const, label: "Ativo",           color: "emerald" },
+                  { value: "SEM CAMPANHA" as const, label: "Sem Camp.",      color: "amber"   },
+                  { value: "CANCELAMENTO" as const, label: "Cancelamento",   color: "red"     },
+                ] as const).map(opt => (
+                  <button key={opt.value} type="button" onClick={() => setStatus(opt.value)}
+                    className={`flex-1 min-w-[100px] py-2 rounded-xl text-xs font-semibold border transition-all ${
+                      status === opt.value
+                        ? opt.color === "emerald" ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                          : opt.color === "amber"   ? "bg-amber-500/15 border-amber-500/40 text-amber-400"
+                          : "bg-red-500/15 border-red-500/40 text-red-400"
+                        : "bg-[#201f1d] border-[#2e2c29] text-[#7a7268] hover:border-[#7a7268]"
+                    }`}>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <Circle size={8} className={status === opt.value ? "fill-current" : ""} />
+                      {opt.label}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Plataformas + Campanhas dinâmicas */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">
+                Plataformas &amp; Campanhas
+              </label>
+              {/* Contador global de campanhas selecionadas */}
+              {(() => {
+                const total = PLATFORM_DEFS
+                  .filter(d => activePlats.has(d.key))
+                  .reduce((acc, d) => acc + (camps[d.key]?.length ?? 0), 0);
+                return total > 0 ? (
+                  <span className="text-[9px] font-semibold text-amber-500/60">
+                    {total} campanha{total !== 1 ? "s" : ""} ativa{total !== 1 ? "s" : ""}
+                  </span>
+                ) : null;
+              })()}
+            </div>
+
+            {PLATFORM_DEFS.map(def => {
+              const isActive = activePlats.has(def.key);
+              return (
+                <div key={def.key}>
+                  {/* Linha de toggle da plataforma */}
+                  <div
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer select-none transition-all ${
+                      isActive
+                        ? "border-amber-500/40 bg-amber-500/5 rounded-b-none border-b-0"
+                        : "border-[#2e2c29] bg-[#201f1d] hover:border-[#3a3835]"
+                    }`}
+                    onClick={() => togglePlatform(def.key)}
+                  >
+                    {/* Checkbox visual */}
+                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                      isActive ? "bg-amber-500 border-amber-500" : "border-[#3a3835]"
+                    }`}>
+                      {isActive && <Check size={12} className="text-[#111] stroke-[4]" />}
+                    </div>
+                    <span className="shrink-0">{PLATFORM_SVG[def.key]}</span>
+                    <span className={`font-semibold text-sm flex-1 transition-colors ${
+                      isActive ? "text-[#e8e2d8]" : "text-[#7a7268]"
+                    }`}>
+                      {def.label}
+                    </span>
+                    {/* Badge: qtd de campanhas selecionadas */}
+                    {isActive && (camps[def.key]?.length ?? 0) > 0 && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${PLATFORM_CHIP_COLOR[def.key]}`}>
+                        {camps[def.key].length}
+                      </span>
+                    )}
+                    <ChevronDown size={14} className={`shrink-0 transition-transform ${isActive ? "text-amber-400 rotate-180" : "text-[#3a3835]"}`} />
+                  </div>
+
+                  {/* Campanhas aparecem IMEDIATAMENTE abaixo */}
+                  {isActive && (
+                    <div className="border border-amber-500/20 border-t-0 rounded-b-xl bg-[#111010]/60 px-4 py-3">
+                      <PlatformCampaignSelector
+                        platKey={def.key}
+                        selectedCamps={camps[def.key] ?? []}
+                        onChange={newCamps => setCamps(prev => ({ ...prev, [def.key]: newCamps }))}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="pb-2" />
+        </div>
+
+        {/* Footer */}
+        <div className="shrink-0 px-5 py-4 border-t border-[#2e2c29] flex gap-3 bg-[#111010]">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-sm font-semibold hover:text-[#e8e2d8] transition-colors">
+             Cancelar
+          </button>
+            <button onClick={handleSave} disabled={saving}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-[#111] text-sm font-bold hover:bg-amber-400 active:scale-95 transition-all shadow-[0_4px_16px_rgba(245,166,35,0.3)] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} className="fill-current" />}
+                {saving ? "Salvando..." : mode === "new" ? "Cadastrar" : "Salvar"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL: SETTINGS (Gestores)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface SettingsModalProps {
+  open: boolean;
+  onClose: () => void;
+  gestoresEstrat: string[];
+  gestoresTrafego: string[];
+  onRenameEstrat:  (o: string, n: string) => Promise<void>;
+  onDeleteEstrat:  (n: string) => Promise<void>;
+  onAddEstrat:     (n: string) => Promise<void>;
+  onRenameTrafego: (o: string, n: string) => Promise<void>;
+  onDeleteTrafego: (n: string) => Promise<void>;
+  onAddTrafego:    (n: string) => Promise<void>;
+}
+
+export function SettingsModal({
+  open, onClose,
+  gestoresEstrat, gestoresTrafego,
+  onRenameEstrat, onDeleteEstrat, onAddEstrat,
+  onRenameTrafego, onDeleteTrafego, onAddTrafego,
+}: SettingsModalProps) {
+  type Tab = "estrategico" | "trafego";
+  const [tab, setTab]         = useState<Tab>("estrategico");
+  const [editing, setEditing] = useState<{ idx: number; val: string } | null>(null);
+  const [newVal, setNewVal]   = useState("");
+  const [busy, setBusy]       = useState(false);
+
+  useEffect(() => {
+    if (open) { setEditing(null); setNewVal(""); setTab("estrategico"); }
+  }, [open]);
+
+  const isEstrat = tab === "estrategico";
+  const list     = isEstrat ? gestoresEstrat : gestoresTrafego;
+  const onRename = isEstrat ? onRenameEstrat  : onRenameTrafego;
+  const onDelete = isEstrat ? onDeleteEstrat  : onDeleteTrafego;
+  const onAdd    = isEstrat ? onAddEstrat     : onAddTrafego;
+
+  const handleSaveEdit = async (original: string) => {
+    const trimmed = editing?.val.trim() ?? "";
+    if (!trimmed) { toast.error("O nome não pode estar vazio."); return; }
+    if (trimmed !== original && list.includes(trimmed)) { toast.error("Já existe um gestor com esse nome."); return; }
+    if (trimmed !== original) { setBusy(true); await onRename(original, trimmed); setBusy(false); }
+    setEditing(null);
+  };
+
+  const handleAdd = async () => {
+    const trimmed = newVal.trim();
+    if (!trimmed) return;
+    if (list.includes(trimmed)) { toast.error("Já existe um gestor com esse nome."); return; }
+    setBusy(true); await onAdd(trimmed); setBusy(false);
+    setNewVal("");
+    toast.success(`"${trimmed}" adicionado!`);
+  };
+
+  const handleDelete = async (name: string) => {
+    if (!confirm(`Remover "${name}"?`)) return;
+    setBusy(true);
+    await onDelete(name); setBusy(false);
+    toast.success(`"${name}" removido.`);
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[100]" style={{ backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }} />
+        <Dialog.Content className="fixed z-[101] inset-x-0 bottom-0 sm:inset-0 sm:flex sm:items-center sm:justify-center" onInteractOutside={onClose}>
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="w-full sm:max-w-md bg-[#1a1917] border border-[#2e2c29] rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col" style={{ maxHeight: "90dvh" }}
+            >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29] shrink-0">
+              <Dialog.Title className="font-bold text-[#e8e2d8] flex items-center gap-2">
+                <Settings size={18} className="text-amber-500" /> Configurações Globais
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] transition-colors">
+                  <X size={16} />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="flex gap-1 px-5 pt-4 shrink-0">
+              {(["estrategico", "trafego"] as Tab[]).map(t => (
+                <button key={t} onClick={() => { setTab(t); setEditing(null); setNewVal(""); }}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    tab === t ? "bg-amber-500 text-[#111]" : "bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8]"
+                  }`}>
+                  {t === "estrategico" ? <><Users size={14} /> Estratégicos</> : <><Layers size={14} /> Tráfego</>}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268] mb-3">
+                 {list.length} gestor{list.length !== 1 ? "es" : ""} cadastrado{list.length !== 1 ? "s" : ""}
+              </p>
+              {list.length === 0 && (
+                <div className="flex items-center justify-center py-8 text-[#7a7268] text-sm">Nenhum gestor cadastrado.</div>
+              )}
+              {list.map((name, idx) => (
+                 <div key={name} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-colors ${
+                  editing?.idx === idx ? "border-amber-500/50 bg-amber-500/5" : "border-[#2e2c29] bg-[#201f1d]"
+                }`}>
+                  {editing?.idx === idx ? (
+                    <>
+                       <input autoFocus value={editing.val}
+                        onChange={e => setEditing({ idx, val: e.target.value })}
+                        onKeyDown={e => { if (e.key === "Enter") handleSaveEdit(name); if (e.key === "Escape") setEditing(null); }}
+                        className="flex-1 bg-transparent text-sm text-[#e8e2d8] outline-none min-w-0"/>
+                      <button onClick={() => handleSaveEdit(name)} disabled={busy}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500 text-[#111] text-xs font-bold hover:bg-amber-400 transition-colors shrink-0 disabled:opacity-50">
+                         {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                      </button>
+                      <button onClick={() => setEditing(null)}
+                        className="px-2.5 py-1 rounded-lg bg-[#2e2c29] text-[#7a7268] text-xs hover:text-[#e8e2d8] transition-colors shrink-0">
+                        <X size={14} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 text-sm font-medium text-[#e8e2d8] truncate">{name}</span>
+                      <button onClick={() => setEditing({ idx, val: name })}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#2e2c29] text-[#7a7268] hover:text-amber-400 hover:bg-amber-500/10 transition-colors shrink-0">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                      </button>
+                      <button onClick={() => handleDelete(name)} disabled={busy}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#2e2c29] text-[#7a7268] hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0 disabled:opacity-50">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                           <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14H6L5 6"/>
+                          <path d="M10 11v6"/><path d="M14 11v6"/>
+                          <path d="M9 6V4h6v2"/>
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div className="flex gap-2 pt-2">
+                <input type="text" value={newVal} onChange={e => setNewVal(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleAdd(); }}
+                  placeholder={isEstrat ? "Ex: João Silva" : "Ex: MR"}
+                  className="flex-1 bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/60 transition-colors"/>
+                <button onClick={handleAdd} disabled={!newVal.trim() || busy}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 text-[#111] text-sm font-bold hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none shrink-0 flex items-center gap-1.5">
+                  {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  Add
+                </button>
+              </div>
+              <p className="text-[10px] text-[#7a7268] pt-1 leading-relaxed">
+                <span className="text-amber-500/70">✦</span> Ao renomear, todos os clientes vinculados são atualizados em cascata.
+              </p>
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 mt-2">
+                <p className="text-[10px] text-blue-400/80 leading-relaxed">
+                  <span className="font-bold">ℹ️</span> Apenas gestores com{" "}
+                  <code className="bg-blue-500/10 px-1 rounded text-[9px]">ativo_na_selecao = true</code>{" "}
+                  aparecem nos dropdowns de cadastro. Configure pelo Supabase.
+                </p>
+              </div>
+              <div className="pb-1" />
+            </div>
+            <div className="shrink-0 px-5 py-4 border-t border-[#2e2c29]">
+              <Dialog.Close asChild>
+                <button className="w-full py-2.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-sm font-semibold hover:text-[#e8e2d8] transition-colors">Fechar</button>
+              </Dialog.Close>
+            </div>
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIALOG: NOVO LEAD MANUAL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface NewLeadDialogProps {
+  open: boolean;
+  onClose: () => void;
+  onSave: (lead: Omit<Lead, "id">) => Promise<void>;
+}
+
+export function NewLeadDialog({ open, onClose, onSave }: NewLeadDialogProps) {
+  const [nome, setNome]             = useState("");
+  const [email, setEmail]           = useState("");
+  const [telefone, setTelefone]     = useState("");
+  const [data, setData]             = useState("");
+  const [plataforma, setPlataforma] = useState(LEAD_PLATFORM_OPTIONS[0]);
+  const [saving, setSaving]         = useState(false);
+
+  useEffect(() => {
+    if (open) { setNome(""); setEmail(""); setTelefone(""); setData(""); setPlataforma(LEAD_PLATFORM_OPTIONS[0]); }
+  }, [open]);
+
+  const handleSave = async () => {
+    if (!nome.trim() && !telefone.trim() && !email.trim()) {
+      toast.error("Preencha ao menos Nome, Telefone ou E-mail.");
+      return;
+    }
+    setSaving(true);
+    try {
+      let dataFormatada = "";
+      if (data) { const [y, m, d] = data.split("-"); dataFormatada = `${d}/${m}/${y}`; }
+      await onSave({ nome: nome.trim(), email: email.trim(), telefone: telefone.trim(), data: dataFormatada, plataforma });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[100]" style={{ backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }} />
+        <Dialog.Content className="fixed z-[101] inset-x-0 bottom-0 sm:inset-0 sm:flex sm:items-center sm:justify-center" onInteractOutside={onClose}>
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="w-full sm:max-w-md bg-[#1a1917] border border-[#2e2c29] rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col" style={{ maxHeight: "90dvh" }}
+            >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29] shrink-0">
+  
+              <Dialog.Title className="font-bold text-[#e8e2d8] flex items-center gap-2">
+                <Plus size={18} className="text-amber-500" /> Novo Lead Manual
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] transition-colors">
+                  <X size={16} />
+                </button>
+      
+              </Dialog.Close>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
+              {([
+                { label: "Nome",     type: "text",  val: nome,     set: setNome,     ph: "Nome completo" },
+  
+                { label: "E-mail",   type: "email", val: email,    set: setEmail,    ph: "email@exemplo.com" },
+                { label: "Telefone", type: "tel",   val: telefone, set: setTelefone, ph: "+55 11 9 0000-0000" },
+              ] as { label: string; type: string; val: string; set: (v: string) => void; ph: string }[]).map(f => (
+                <div key={f.label} className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">{f.label}</label>
+                  <input type={f.type} value={f.val} onChange={e => f.set(e.target.value)} placeholder={f.ph}
+                    className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/60 transition-colors"/>
+                </div>
+              ))}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Data do Lead</label>
+                <input type="date" value={data} onChange={e => setData(e.target.value)}
+ 
+                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors [color-scheme:dark] cursor-pointer"/>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Plataforma</label>
+                <div className="relative">
+   
+                    <select value={plataforma} onChange={e => setPlataforma(e.target.value)}
+                    className="w-full appearance-none bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 pr-9 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors cursor-pointer">
+                    {LEAD_PLATFORM_OPTIONS.map(o => <option key={o}>{o}</option>)}
+                  </select>
+      
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268]" size={14} />
+                </div>
+              </div>
+              <div className="pb-1" />
+            </div>
+            <div className="shrink-0 px-5 py-4 border-t border-[#2e2c29] flex gap-3">
+    
+              <Dialog.Close asChild>
+                <button className="flex-1 py-2.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-sm font-semibold hover:text-[#e8e2d8] transition-colors">Cancelar</button>
+              </Dialog.Close>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-[#111] text-sm font-bold hover:bg-amber-400 active:scale-95 transition-all shadow-[0_4px_16px_rgba(245,166,35,0.3)] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} className="fill-current" />}
+                {saving ? "Salvando..." : "Salvar Lead"}
+              </button>
+            </div>
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
