@@ -130,17 +130,51 @@ function normalizeH(h: string): string {
 function formatDate(raw: string): string {
   if (!raw) return "";
   const s = raw.trim();
-  const isoT = s.match(/^(\d{4})-(\d{2})-(\d{2})T/);
-  if (isoT) return `${isoT[3]}/${isoT[2]}/${isoT[1]}`;
-  const isoSpace = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoSpace) return `${isoSpace[3]}/${isoSpace[2]}/${isoSpace[1]}`;
+
+  // 1. ISO 8601 / Meta format (2026-03-05T21:17:49-03:00 ou 2026-03-05 21:17:49)
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  // 2. American (MM/DD/YYYY) ou Brasileiro (DD/MM/YYYY) com separadores / ou -
+  const dateMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (dateMatch) {
+    const v1 = parseInt(dateMatch[1]);
+    const v2 = parseInt(dateMatch[2]);
+    const year = dateMatch[3];
+    
+    // Heurística de identificação:
+    // Se o primeiro número for > 12, só pode ser DD/MM/YYYY (BR)
+    if (v1 > 12) return `${year}-${dateMatch[2].padStart(2, '0')}-${dateMatch[1].padStart(2, '0')}`;
+    
+    // Se o segundo número for > 12, só pode ser MM/DD/YYYY (US)
+    if (v2 > 12) return `${year}-${dateMatch[1].padStart(2, '0')}-${dateMatch[2].padStart(2, '0')}`;
+    
+    // Se ambos forem <= 12, priorizamos o formato Brasileiro (DD/MM/YYYY) para nosso mercado,
+    // A menos que estejamos tratando um arquivo do Meta Ads com campos americanos.
+    // No entanto, o padrão ISO-8601 acima já pega o formato nativo do Meta.
+    // Como fallback seguro, usamos o padrão Brasileiro.
+    return `${year}-${dateMatch[2].padStart(2, '0')}-${dateMatch[1].padStart(2, '0')}`;
+  }
+
+  // 3. Formato textual (ex: "Mar 05 2026")
   const monthMap: Record<string,string> = {
     jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",
     jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12",
   };
-  const glsMatch = s.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})/);
-  if (glsMatch) { const m = monthMap[glsMatch[1].toLowerCase()]??"01"; return `${glsMatch[2].padStart(2,"0")}/${m}/${glsMatch[3]}`; }
-  if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s.slice(0,10);
+  const textualMatch = s.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})/);
+  if (textualMatch) { 
+    const m = monthMap[textualMatch[1].toLowerCase()]??"01"; 
+    return `${textualMatch[3]}-${m}-${textualMatch[2].padStart(2,"0")}`; 
+  }
+
+  // 4. Backup final usando o construtor Date do JS e convertendo para ISO
+  try {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  } catch {
+    // ignora e devolve original
+  }
+
   return s;
 }
 
@@ -157,70 +191,77 @@ function detectSource(fileName: string, headers: string[]): "gls"|"meta"|"elemen
   return "generic";
 }
 
-function parseGLS(rows: Record<string,string>[]): Lead[] {
-  return rows.map((r,i) => ({
-    id:`l-${Date.now()}-${i}`, nome:"", email:"",
-    telefone: r["Customer"]?.trim()??"",
-    data: formatDate(r["Lead received"]?.trim()??""),
-    plataforma:"Google Local Services",
-  } as Lead)).filter(l => l.telefone);
-}
+// Removed parseGLS, parseMeta, parseElementor - consolidated into parseGeneric
 
-function parseMeta(rows: Record<string,string>[]): Lead[] {
-  return rows
-    .filter(r => (r["is_organic"]??r[" is_organic"]??"").trim() !== "true")
-    .map((r,i) => {
-      const get = (k:string) => (r[k]??r[` ${k}`]??r[`${k} `]??"").trim();
-      const rawPhone = get("phone_number");
-      const telefone = rawPhone.includes(":") ? rawPhone.split(":").slice(1).join(":").trim() : rawPhone;
-      return { id:`l-${Date.now()}-${i}`, nome:get("full_name"), email:get("email"), telefone,
-               data:formatDate(get("created_time")), plataforma:"Meta Ads" } as Lead;
-    }).filter(l => l.nome||l.telefone||l.email);
-}
-
-function parseElementor(rows: Record<string,string>[]): Lead[] {
-  return rows.map((r,i) => {
-    const nome = [(r["First Name"]??"").trim(),(r["Last Name"]??"").trim()].filter(Boolean).join(" ");
-    return { id:`l-${Date.now()}-${i}`, nome,
-             email:(r["Your Email"]??r["Email"]??"").trim(),
-             telefone:(r["Your Phone"]??r["Phone"]??r["Your Phone Number"]??"").trim(),
-             data:formatDate(r["Created At"]??r["Submission Date"]??""),
-             plataforma:"Elementor Form" } as Lead;
-  }).filter(l => l.nome||l.telefone||l.email);
-}
-
-const GENERIC_HEADER_MAP: Record<string,keyof Lead> = {
-  nome:"nome",name:"nome",fullname:"nome",nomecompleto:"nome",
-  email:"email",emailaddress:"email",
-  telefone:"telefone",phone:"telefone",phonenumber:"telefone",celular:"telefone",whatsapp:"telefone",
-  data:"data",date:"data",createdat:"data",datacriacao:"data",
-  plataforma:"plataforma",platform:"plataforma",origem:"plataforma",source:"plataforma",
+const KEYWORD_MAP: Record<string, string[]> = {
+  nome:      ['fullname', 'full_name', 'nome', 'name', 'customer', 'customer_name', 'cliente', 'first_name', 'last_name'],
+  email:     ['email', 'email_address', 'e-mail', 'address'],
+  telefone:  ['phone_number', 'phone', 'telefone', 'phonenumber', 'celular', 'whatsapp', 'customer_phone'],
+  data:      ['created_time', 'date', 'data', 'time', 'lead_received', 'submission_date', 'created_at', 'datacriacao'],
+  plataforma:['platform', 'plataforma', 'source', 'origem', 'form_name'],
 };
 
-function parseGeneric(rows: Record<string,string>[]): Lead[] {
+const NOISE_KEYWORDS = ['what_can_we_do', 'question', 'pergunta', 'how_did_you', 'message'];
+
+function parseGeneric(rows: Record<string,string>[], platformOverride?: string): Lead[] {
   if (!rows.length) return [];
   const headers = Object.keys(rows[0]);
-  const fieldMap: Record<string,keyof Lead> = {};
-  for (const h of headers) { const m = GENERIC_HEADER_MAP[normalizeH(h)]; if (m) fieldMap[h]=m; }
-  return rows.map((r,i) => {
-    const l: Partial<Lead> = { id:`l-${Date.now()}-${i}`, email:"", plataforma:"" };
-    for (const [h,field] of Object.entries(fieldMap)) {
-      const val = r[h]?.trim()??"";
-      l[field] = field==="data" ? formatDate(val) : val;
+  const fieldMapping: Record<string, keyof Lead> = {};
+
+  // Mapeamento inteligente de colunas com base em palavras-chave
+  for (const h of headers) {
+    const normalized = normalizeH(h);
+    
+    // Ignora se for considerado ruído (perguntas customizadas)
+    if (NOISE_KEYWORDS.some(kw => normalized.includes(kw))) continue;
+
+    for (const [field, keywords] of Object.entries(KEYWORD_MAP)) {
+      if (keywords.includes(normalized)) {
+        fieldMapping[h] = field as keyof Lead;
+        break;
+      }
     }
-    return l as Lead;
-  }).filter(l => l.nome||l.telefone||l.email);
+  }
+
+  return rows.map((r, i) => {
+    const lead: Partial<Lead> = { id: `l-${Date.now()}-${i}`, nome: "", email: "", telefone: "", data: "", plataforma: platformOverride || "" };
+    
+    for (const [header, field] of Object.entries(fieldMapping)) {
+      const value = r[header]?.trim() ?? "";
+      if (!value) continue;
+
+      if (field === "data") {
+        lead.data = formatDate(value);
+      } else if (field === "telefone") {
+        // Limpeza básica para Meta que vem com prefixos
+        lead.telefone = value.includes(":") ? value.split(":").slice(1).join(":").trim() : value;
+      } else if (field === "nome") {
+        // Se já tiver nome (ex: vindo de first_name), concatena se encontrarmos outro
+        lead.nome = lead.nome ? `${lead.nome} ${value}`.trim() : value;
+      } else if (field !== "id") {
+        (lead as any)[field] = value;
+      }
+    }
+
+    return lead as Lead;
+  }).filter(l => l.nome || l.telefone || l.email);
 }
 
 function parseCSV(rows: Record<string,string>[], fileName: string): Lead[] {
   if (!rows.length) return [];
+  
   const source = detectSource(fileName, Object.keys(rows[0]));
-  switch (source) {
-    case "gls":       return parseGLS(rows);
-    case "meta":      return parseMeta(rows);
-    case "elementor": return parseElementor(rows);
-    default:          return parseGeneric(rows);
+  
+  // Se for Meta, filtramos orgânicos antes de passar para o parser genérico potente
+  if (source === "meta") {
+    const filteredRows = rows.filter(r => (r["is_organic"] ?? r[" is_organic"] ?? "").trim() !== "true");
+    return parseGeneric(filteredRows, "Meta Ads");
   }
+
+  if (source === "gls")       return parseGeneric(rows, "Google Local Services");
+  if (source === "elementor") return parseGeneric(rows, "Elementor Form");
+
+  return parseGeneric(rows);
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -506,7 +547,7 @@ function Dropzone({ onParsed }: { onParsed: (leads: Lead[]) => void }) {
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
       Papa.parse<Record<string,string>>(text, {
         header:true,
-        skipEmptyLines:true,
+        skipEmptyLines: "greedy",
         delimiter: "", // String vazia = auto-detecção de delimitador (vírgula, tab, pipe, etc)
         complete: result => {
           const parsed = parseCSV(result.data, file.name);
@@ -609,8 +650,8 @@ function LeadMobileCard({ lead, selected, onToggle }: { lead: Lead; selected: bo
 // LEAD ACCORDION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSelected, currentPage, onPageChange, totalLeads, itemsPerPage, onItemsPerPageChange }: {
-  leads:Lead[]; search:string; platFilter:string; dateFrom:string; dateTo:string;
+function LeadAccordion({ leads, paginatedLeads, search, platFilter, dateFrom, dateTo, onDeleteSelected, currentPage, onPageChange, totalLeads, itemsPerPage, onItemsPerPageChange }: {
+  leads:Lead[]; paginatedLeads:Lead[]; search:string; platFilter:string; dateFrom:string; dateTo:string;
   onDeleteSelected:(ids:string[])=>void;
   currentPage: number;
   onPageChange: (page: number) => void;
@@ -629,22 +670,8 @@ function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSe
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  const dtFrom = dateFrom ? new Date(dateFrom) : null;
-  const dtTo   = dateTo   ? new Date(dateTo)   : null;
-  if (dtTo) dtTo.setHours(23,59,59,999);
-  const s = search.toLowerCase();
-
-  const filtered = leads.filter(l => {
-    const matchText = !s||l.nome.toLowerCase().includes(s)||l.telefone.includes(s)||(l.email||"").toLowerCase().includes(s);
-    const matchPlat = !platFilter||(l.plataforma||"").toLowerCase().includes(platFilter.toLowerCase());
-    let matchDate = true;
-    if (dtFrom||dtTo) {
-      const leadDate = parseDMY(l.data??"");
-      if (!leadDate) matchDate=false;
-      else { if (dtFrom&&leadDate<dtFrom) matchDate=false; if (dtTo&&leadDate>dtTo) matchDate=false; }
-    }
-    return matchText && matchPlat && matchDate;
-  });
+  // O componente recebe 'leads' já filtrados do componente pai.
+  const filtered = leads;
 
   const totalPages = Math.ceil(totalLeads / itemsPerPage);
 
@@ -663,13 +690,14 @@ function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSe
     const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n;
   });
 
-  const allVisible = filtered.map(l=>l.id);
-  const allSelected = allVisible.length>0&&allVisible.every(id=>selected.has(id));
-  const toggleAll = () => setSelected(allSelected?new Set():new Set(allVisible));
+  // Para o 'selecionar tudo', usamos TODOS os leads filtrados (todas as páginas)
+  const allFilteredIds = filtered.map(l=>l.id);
+  const allSelected = allFilteredIds.length>0&&allFilteredIds.every(id=>selected.has(id));
+  const toggleAll = () => setSelected(allSelected?new Set():new Set(allFilteredIds));
 
   const handleDelete = () => {
     if (!selected.size) return;
-    if (!confirm(`Excluir ${selected.size} lead(s) permanentemente?`)) return;
+    if (!confirm(`Excluir ${selected.size} lead(s) permanentemente? Esta ação afetará leads selecionados em todas as páginas.`)) return;
     onDeleteSelected([...selected]);
     setSelected(new Set());
   };
@@ -694,15 +722,17 @@ function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSe
       <div className="flex items-center gap-2 px-1">
         <input type="checkbox" checked={allSelected} onChange={toggleAll}
           className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"/>
-        <span className="text-[10px] text-[#7a7268] font-semibold uppercase tracking-widest">Selecionar tudo</span>
+        <span className="text-[10px] text-[#7a7268] font-semibold uppercase tracking-widest">Selecionar TODOS os {totalLeads} leads encontrados</span>
       </div>
 
       {isMobile ? (
         <div className="space-y-4">
           {Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).map(([plat,items]) => {
             const style = getPlatformAccordionStyle(plat);
-            const sorted = [...items].sort((a,b)=>parseDateForSort(b.data)-parseDateForSort(a.data));
             const isOpen = openPlats.has(plat);
+            // Mostrar apenas leads desta categoria que estão na página atual
+            const itemsInThisPage = items.filter(l => paginatedLeads.some(pl => pl.id === l.id))
+                                         .sort((a,b)=>parseDateForSort(b.data)-parseDateForSort(a.data));
             return (
               <div key={plat} className={`rounded-xl border overflow-hidden ${style.header}`}>
                 <button onClick={()=>toggle(plat)}
@@ -715,14 +745,18 @@ function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSe
                 </button>
                 {isOpen && (
                   <div className="p-3 space-y-2 bg-[#111010]/40">
-                    {sorted.map(l => (
-                      <LeadMobileCard
-                        key={l.id}
-                        lead={l}
-                        selected={selected.has(l.id)}
-                        onToggle={() => toggleSelect(l.id)}
-                      />
-                    ))}
+                    {itemsInThisPage.length > 0 ? (
+                      itemsInThisPage.map(l => (
+                        <LeadMobileCard
+                          key={l.id}
+                          lead={l}
+                          selected={selected.has(l.id)}
+                          onToggle={() => toggleSelect(l.id)}
+                        />
+                      ))
+                    ) : (
+                      <p className="text-[10px] text-[#4a4844] italic text-center py-2">Nenhum lead nesta categoria na página atual.</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -733,7 +767,10 @@ function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSe
         Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).map(([plat,items])=>{
           const isOpen=openPlats.has(plat);
           const style=getPlatformAccordionStyle(plat);
-          const sorted=[...items].sort((a,b)=>parseDateForSort(b.data)-parseDateForSort(a.data));
+          // Mostrar apenas leads desta categoria que estão na página atual
+          const itemsInThisPage = items.filter(l => paginatedLeads.some(pl => pl.id === l.id))
+                                       .sort((a,b)=>parseDateForSort(b.data)-parseDateForSort(a.data));
+
           return (
             <div key={plat} className={`rounded-xl border overflow-hidden ${style.header}`}>
               <button onClick={()=>toggle(plat)}
@@ -746,30 +783,36 @@ function LeadAccordion({ leads, search, platFilter, dateFrom, dateTo, onDeleteSe
               </button>
               {isOpen&&(
                 <div className="divide-y divide-[#2e2c29]/50">
-                  {sorted.map(l=>(
-                    <div key={l.id} className="flex items-start gap-3 px-4 py-3 hover:bg-[#201f1d]/40 transition-colors">
-                      <input type="checkbox" checked={selected.has(l.id)} onChange={()=>toggleSelect(l.id)}
-                        className="mt-0.5 w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer shrink-0"/>
-                      <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1">
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">Nome</p>
-                          <p className="text-sm text-[#e8e2d8] truncate">{l.nome||"—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">Telefone</p>
-                          <p className="text-sm text-[#e8e2d8]">{l.telefone||"—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">E-mail</p>
-                          <p className="text-sm text-[#e8e2d8] truncate">{l.email||"—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">Data</p>
-                          <p className="text-sm text-[#e8e2d8]">{l.data||"—"}</p>
+                  {itemsInThisPage.length > 0 ? (
+                    itemsInThisPage.map(l=>(
+                      <div key={l.id} className="flex items-start gap-3 px-4 py-3 hover:bg-[#201f1d]/40 transition-colors">
+                        <input type="checkbox" checked={selected.has(l.id)} onChange={()=>toggleSelect(l.id)}
+                          className="mt-0.5 w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer shrink-0"/>
+                        <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">Nome</p>
+                            <p className="text-sm text-[#e8e2d8] truncate">{l.nome||"—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">Telefone</p>
+                            <p className="text-sm text-[#e8e2d8]">{l.telefone||"—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">E-mail</p>
+                            <p className="text-sm text-[#e8e2d8] truncate">{l.email||"—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a4844]">Data</p>
+                            <p className="text-sm text-[#e8e2d8]">{l.data||"—"}</p>
+                          </div>
                         </div>
                       </div>
+                    ))
+                  ) : (
+                    <div className="px-4 py-4 text-center">
+                      <p className="text-xs text-[#4a4844] italic">Nenhum lead nesta categoria na página atual.</p>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
@@ -1420,9 +1463,7 @@ export default function Home() {
   const [clienteModal, setClienteModal]       = useState<{ mode:"new"|"edit"; client?: Cliente } | null>(null);
   const [editModal, setEditModal]             = useState<Cliente | null>(null);
 
-  const [activeLeads, setActiveLeads]   = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
-  const [totalLeads, setTotalLeads]     = useState(0);
   const [currentPage, setCurrentPage]   = useState(1);
   const [newLeadOpen, setNewLeadOpen]   = useState(false);
   // Dashboard: dataset completo (sem paginação) para cálculos de métricas
@@ -1559,28 +1600,22 @@ export default function Home() {
     fetchClientes(op.id);
   };
 
-  const fetchLeads = useCallback(async (clienteId: string, page = 1) => {
+  const fetchLeads = useCallback(async (clienteId: string) => {
     setLeadsLoading(true);
     try {
-      const from = (page - 1) * itemsPerPage;
-      const to   = from + itemsPerPage - 1;
-      const { count, error: countError } = await supabase
-        .from("leads").select("id", { count: "exact", head: true }).eq("cliente", clienteId);
-      if (countError) throw countError;
-      setTotalLeads(count ?? 0);
       const { data, error } = await supabase
         .from("leads").select("*").eq("cliente", clienteId)
-        .order("created_at", { ascending: false }).range(from, to);
+        .order("created_at", { ascending: false });
       if (error) throw error;
-      setActiveLeads((data as Lead[]) ?? []);
-      setCurrentPage(page);
+      const rows = (data as Lead[]) ?? [];
+      setAllLeadsForDashboard(rows);
     } catch (err: unknown) {
       toast.error(`Erro ao buscar leads: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
-      setActiveLeads([]);
+      setAllLeadsForDashboard([]);
     } finally {
       setLeadsLoading(false);
     }
-  }, [itemsPerPage]);
+  }, []);
 
   // Busca TODOS os leads (sem paginação) para cálculos do Dashboard
   const fetchDashboardMetrics = useCallback(async (clienteId: string) => {
@@ -1616,10 +1651,9 @@ export default function Home() {
     scrollPosRef.current = window.scrollY; // Salva a posição
     setClienteAtivo(cliente); setLeadSearch(""); setPlatFilter("");
     setDateFrom(""); setDateTo(""); setPeriodPreset("max"); setCurrentPage(1);
-    fetchLeads(cliente.id, 1);
-    fetchDashboardMetrics(cliente.id); // Busca TODOS os leads para o dashboard
+    fetchLeads(cliente.id);
     window.scrollTo({ top: 0, behavior: "smooth" }); // Sobe suavemente
-  }, [fetchLeads, fetchDashboardMetrics]);
+  }, [fetchLeads]);
 
   const handleLeadsParsed = useCallback(async (parsedLeads: Lead[]) => {
     if (!clienteAtivo||!operacaoAtiva) return;
@@ -1629,24 +1663,26 @@ export default function Home() {
       cliente:clienteAtivo.id, operacao:operacaoAtiva.nome, operacao_id:operacaoAtiva.id,
     }));
     try {
-      const { error } = await supabase.from("leads").insert(rows);
+      const { data, error } = await supabase.from("leads").insert(rows).select();
       if (error) throw error;
       toast.success(`${rows.length} leads salvos no banco!`);
-      fetchLeads(clienteAtivo.id, 1);
-      fetchDashboardMetrics(clienteAtivo.id); // Atualiza métricas do dashboard
+      // Simplesmente atualiza o estado local para evitar re-fetch de tudo
+      setAllLeadsForDashboard(prev => [...((data as Lead[]) ?? []), ...prev].sort((a,b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      }));
     } catch (err: unknown) {
       toast.error(`Erro ao salvar leads: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
     }
-  }, [clienteAtivo, operacaoAtiva, fetchLeads, fetchDashboardMetrics]);
+  }, [clienteAtivo, operacaoAtiva]);
 
   const handleDeleteLeads = useCallback(async (ids: string[]) => {
     try {
       const { error } = await supabase.from("leads").delete().in("id",ids);
       if (error) throw error;
       toast.success(`${ids.length} lead(s) excluído(s).`);
-      setActiveLeads(prev => prev.filter(l=>!ids.includes(l.id)));
-      setAllLeadsForDashboard(prev => prev.filter(l=>!ids.includes(l.id))); // Atualiza dashboard
-      setTotalLeads(prev => Math.max(0, prev - ids.length));
+      setAllLeadsForDashboard(prev => prev.filter(l=>!ids.includes(l.id)));
     } catch (err: unknown) {
       toast.error(`Erro ao excluir leads: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
     }
@@ -1664,9 +1700,7 @@ export default function Home() {
       const { data, error } = await supabase.from("leads").insert([row]).select().single();
       if (error) throw error;
       toast.success("Lead adicionado com sucesso!"); setNewLeadOpen(false);
-      setActiveLeads(prev => [data as Lead,...prev]);
-      setAllLeadsForDashboard(prev => [data as Lead,...prev]); // Atualiza dashboard
-      setTotalLeads(prev => prev + 1);
+      setAllLeadsForDashboard(prev => [data as Lead,...prev]);
     } catch (err: unknown) {
       toast.error(`Erro ao salvar lead: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
     }
@@ -1780,33 +1814,15 @@ export default function Home() {
     } catch (err: unknown) { toast.error(`Erro: ${(err as Error).message}`); }
   };
 
-  // Filtro para a TABELA (usa activeLeads paginado)
+  // Filtro principal unificado de leads
   const filteredLeads = (() => {
     const dtFrom = dateFrom ? new Date(dateFrom) : null;
     const dtTo   = dateTo   ? new Date(dateTo)   : null;
     if (dtTo) dtTo.setHours(23,59,59,999);
     const s = leadSearch.toLowerCase();
-    return activeLeads.filter(l => {
-      const matchText = !s||l.nome.toLowerCase().includes(s)||l.telefone.includes(s)||(l.email||"").toLowerCase().includes(s);
-      const matchPlat = !platFilter||(l.plataforma||"").toLowerCase().includes(platFilter.toLowerCase());
-      let matchDate = true;
-      if (dtFrom||dtTo) {
-        const leadDate = parseDMY(l.data??"");
-        if (!leadDate) matchDate=false;
-        else { if (dtFrom&&leadDate<dtFrom) matchDate=false; if (dtTo&&leadDate>dtTo) matchDate=false; }
-      }
-      return matchText && matchPlat && matchDate;
-    });
-  })();
-
-  // Filtro para o DASHBOARD (usa allLeadsForDashboard completo)
-  const filteredDashboardLeads = (() => {
-    const dtFrom = dateFrom ? new Date(dateFrom) : null;
-    const dtTo   = dateTo   ? new Date(dateTo)   : null;
-    if (dtTo) dtTo.setHours(23,59,59,999);
-    const s = leadSearch.toLowerCase();
+    
     return allLeadsForDashboard.filter(l => {
-      const matchText = !s||l.nome.toLowerCase().includes(s)||l.telefone.includes(s)||(l.email||"").toLowerCase().includes(s);
+      const matchText = !s||(l.nome||"").toLowerCase().includes(s)||l.telefone.includes(s)||(l.email||"").toLowerCase().includes(s);
       const matchPlat = !platFilter||(l.plataforma||"").toLowerCase().includes(platFilter.toLowerCase());
       let matchDate = true;
       if (dtFrom||dtTo) {
@@ -1818,7 +1834,17 @@ export default function Home() {
     });
   })();
 
-  const platOptions   = [...new Set(activeLeads.map(l=>l.plataforma).filter(Boolean))].sort();
+  // Paginação derivativa
+  const totalLeadsCount = filteredLeads.length;
+  const paginatedLeads = filteredLeads.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  // Dashboard usa o mesmo set filtrado
+  const filteredDashboardLeads = filteredLeads;
+
+  const platOptions   = [...new Set(allLeadsForDashboard.map(l=>l.plataforma).filter(Boolean))].sort();
   const gestorOptions = [...new Set(clientes.map(c=>c.gestor_estrategico).filter(Boolean))].sort();
 
   const filteredClientes = clientes.filter(c => {
@@ -2277,9 +2303,9 @@ const backToDashboard = () => {
                 <div className="flex items-center gap-1.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-amber-500"/>
                   <span className="text-xs font-semibold text-[#7a7268]">
-                    <span className="text-[#e8e2d8]">{totalLeads}</span> leads totais
+                    <span className="text-[#e8e2d8]">{totalLeadsCount}</span> leads encontrados
                     {" · "}
-                    <span className="text-[#e8e2d8]">{filteredLeads.length}</span> nesta página
+                    <span className="text-[#e8e2d8]">{paginatedLeads.length}</span> nesta página
                   </span>
                 </div>
                 {leadsLoading && <span className="text-xs text-[#7a7268] animate-pulse flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Carregando...</span>}
@@ -2379,17 +2405,18 @@ const backToDashboard = () => {
               </div>
             ) : (
               <LeadAccordion
-                leads={activeLeads}
+                leads={filteredLeads}
+                paginatedLeads={paginatedLeads}
                 search={leadSearch}
                 platFilter={platFilter}
                 dateFrom={dateFrom}
                 dateTo={dateTo}
                 onDeleteSelected={handleDeleteLeads}
                 currentPage={currentPage}
-                onPageChange={handlePageChange}
-                totalLeads={totalLeads}
+                onPageChange={(p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                totalLeads={totalLeadsCount}
                 itemsPerPage={itemsPerPage}
-                onItemsPerPageChange={handleItemsPerPageChange}
+                onItemsPerPageChange={(i) => { setItemsPerPage(i); setCurrentPage(1); }}
               />
             )}
 
