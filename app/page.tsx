@@ -1595,7 +1595,7 @@ export default function Home() {
   }, []);
 
   const handleSelectOperacao = (op: Operacao) => {
-    setOperacaoAtiva(op); setClienteAtivo(null); setActiveLeads([]);
+    setOperacaoAtiva(op); setClienteAtivo(null);
     setClientSearch(""); setGestorFilter(""); setOpDropdownOpen(false);
     fetchClientes(op.id);
   };
@@ -1617,35 +1617,7 @@ export default function Home() {
     }
   }, []);
 
-  // Busca TODOS os leads (sem paginação) para cálculos do Dashboard
-  const fetchDashboardMetrics = useCallback(async (clienteId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("leads")
-        .select("*")
-        .eq("cliente", clienteId)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setAllLeadsForDashboard((data as Lead[]) ?? []);
-    } catch (err: unknown) {
-      console.error("Erro ao buscar métricas do dashboard:", err);
-      setAllLeadsForDashboard([]);
-    }
-  }, []);
-
-  const handlePageChange = useCallback((page: number) => {
-    if (!clienteAtivo) return;
-    fetchLeads(clienteAtivo.id, page);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [clienteAtivo, fetchLeads]);
-
-  const handleItemsPerPageChange = useCallback((newItemsPerPage: number) => {
-    if (!clienteAtivo) return;
-    setItemsPerPage(newItemsPerPage);
-    // Reset para página 1 ao mudar quantidade de itens
-    fetchLeads(clienteAtivo.id, 1);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [clienteAtivo, fetchLeads]);
+  // Obsolete pagination functions removed. Logic now handled by filteredLeads/paginatedLeads derivations.
 
   const handleSelectCliente = useCallback((cliente: Cliente) => {
     scrollPosRef.current = window.scrollY; // Salva a posição
@@ -1743,7 +1715,7 @@ export default function Home() {
       const { error } = await supabase.from("clientes").delete().eq("id",id);
       if (error) throw error;
       setClientes(prev=>prev.filter(x=>x.id!==id));
-      if (clienteAtivo?.id===id) { setClienteAtivo(null); setActiveLeads([]); }
+      if (clienteAtivo?.id===id) { setClienteAtivo(null); }
       toast.success("Cliente removido.");
     } catch (err: unknown) {
       toast.error(`Erro: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
