@@ -1023,3 +1023,580 @@ export function NewLeadDialog({ open, onClose, onSave }: NewLeadDialogProps) {
     </Dialog.Root>
   );
 }
+
+// ─── Adicionar ao arquivo: app/components/Modais.tsx ────────────────────────
+// Cole estes dois componentes no final do arquivo existente (antes do último })
+// e adicione os exports correspondentes.
+
+// ─── Imports adicionais necessários (adicionar ao topo de Modais.tsx) ────────
+// import { AlertTriangle, Bell, CheckCircle, ImageIcon, X, Loader2 } from "lucide-react";
+// (verifique quais já existem no arquivo e adicione apenas os que faltam)
+
+import { useState, useRef, useCallback, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
+import { AlertTriangle, Bell, CheckCircle, ImageIcon, X, Loader2, Bug } from "lucide-react";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface BugReport {
+  id: string;
+  user_id: string;
+  user_nome: string;
+  descricao: string;
+  image_url: string | null;
+  status: "aberto" | "resolvido";
+  created_at: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL: REPORTAR BUG (visível para todos)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function ReportBugModal({
+  open,
+  onClose,
+  userId,
+  userNome,
+}: {
+  open: boolean;
+  onClose: () => void;
+  userId: string;
+  userNome: string;
+}) {
+  const [descricao, setDescricao] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = useCallback((file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Por favor, selecione apenas arquivos de imagem.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("A imagem deve ter no máximo 5MB.");
+      return;
+    }
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => setImagePreview(e.target?.result as string);
+    reader.readAsDataURL(file);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      handleFileChange(file);
+    },
+    [handleFileChange]
+  );
+
+  const handleSubmit = async () => {
+    if (!descricao.trim()) {
+      toast.error("Por favor, descreva o problema.");
+      return;
+    }
+    setLoading(true);
+    try {
+      let image_url: string | null = null;
+
+      if (imageFile) {
+        const ext = imageFile.name.split(".").pop();
+        const fileName = `bug_${Date.now()}_${userId}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from("bugs")
+          .upload(fileName, imageFile, { upsert: false });
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from("bugs")
+          .getPublicUrl(fileName);
+        image_url = urlData?.publicUrl ?? null;
+      }
+
+      const { error } = await supabase.from("bug_reports").insert({
+        user_id: userId,
+        user_nome: userNome,
+        descricao: descricao.trim(),
+        image_url,
+        status: "aberto",
+      });
+      if (error) throw error;
+
+      toast.success("Bug reportado com sucesso! Obrigado pelo feedback. 🐛");
+      setDescricao("");
+      setImageFile(null);
+      setImagePreview(null);
+      onClose();
+    } catch (err: unknown) {
+      toast.error(
+        `Erro ao enviar: ${err instanceof Error ? err.message : "Erro desconhecido"}`
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (loading) return;
+    setDescricao("");
+    setImageFile(null);
+    setImagePreview(null);
+    onClose();
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={handleClose}
+      />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-md bg-[#1a1917] border border-[#2e2c29] rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-orange-500/15 border border-orange-500/25 flex items-center justify-center">
+              <Bug size={16} className="text-orange-400" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-[#e8e2d8]">Reportar Bug</h2>
+              <p className="text-[10px] text-[#7a7268]">Descreva o problema encontrado</p>
+            </div>
+          </div>
+          <button
+            onClick={handleClose}
+            disabled={loading}
+            className="w-7 h-7 flex items-center justify-center rounded-xl text-[#7a7268] hover:text-[#e8e2d8] hover:bg-[#2e2c29] transition-colors"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-4">
+          {/* Descrição */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">
+              Descrição do problema <span className="text-orange-400">*</span>
+            </label>
+            <textarea
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+              placeholder="Ex: Ao clicar no botão 'Exportar', a página congela e não gera o arquivo..."
+              rows={4}
+              disabled={loading}
+              className="w-full bg-[#111010] border border-[#2e2c29] rounded-xl px-4 py-3 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-orange-500/60 transition-colors resize-none disabled:opacity-50"
+            />
+            <p className="text-[10px] text-[#4a4844]">
+              {descricao.length}/500 caracteres
+            </p>
+          </div>
+
+          {/* Upload de imagem */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">
+              Screenshot (opcional)
+            </label>
+
+            {imagePreview ? (
+              <div className="relative rounded-xl overflow-hidden border border-[#2e2c29] bg-[#111010]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imagePreview}
+                  alt="Preview"
+                  className="w-full max-h-40 object-contain"
+                />
+                <button
+                  onClick={() => {
+                    setImageFile(null);
+                    setImagePreview(null);
+                  }}
+                  disabled={loading}
+                  className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center text-white hover:bg-red-500/80 transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ) : (
+              <div
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => !loading && fileInputRef.current?.click()}
+                className="border-2 border-dashed border-[#2e2c29] rounded-xl p-6 flex flex-col items-center gap-2 cursor-pointer hover:border-orange-500/40 hover:bg-orange-500/5 transition-all group"
+              >
+                <ImageIcon
+                  size={22}
+                  className="text-[#4a4844] group-hover:text-orange-400 transition-colors"
+                />
+                <p className="text-xs text-[#7a7268] text-center">
+                  Arraste uma imagem ou{" "}
+                  <span className="text-orange-400 font-semibold">clique para selecionar</span>
+                </p>
+                <p className="text-[10px] text-[#4a4844]">PNG, JPG, WEBP — máx. 5MB</p>
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-[#2e2c29] flex gap-2">
+          <button
+            onClick={handleClose}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 rounded-xl border border-[#2e2c29] text-xs font-semibold text-[#7a7268] hover:text-[#e8e2d8] hover:border-[#7a7268] transition-colors disabled:opacity-40"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={loading || !descricao.trim()}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-400 active:scale-95 transition-all shadow-[0_2px_12px_rgba(249,115,22,0.3)] disabled:opacity-40 disabled:pointer-events-none"
+          >
+            {loading ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                Enviando...
+              </>
+            ) : (
+              <>
+                <Bug size={13} />
+                Enviar Report
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL: PAINEL DE BUGS (somente admin)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function AdminBugsModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [bugs, setBugs] = useState<BugReport[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"todos" | "aberto" | "resolvido">("todos");
+
+  const fetchBugs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("bug_reports")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setBugs((data as BugReport[]) ?? []);
+    } catch (err: unknown) {
+      toast.error(
+        `Erro ao carregar bugs: ${err instanceof Error ? err.message : "Erro desconhecido"}`
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) fetchBugs();
+  }, [open, fetchBugs]);
+
+  const handleMarkResolved = async (id: string, currentStatus: BugReport["status"]) => {
+    const newStatus: BugReport["status"] =
+      currentStatus === "resolvido" ? "aberto" : "resolvido";
+    setResolvingId(id);
+    try {
+      const { error } = await supabase
+        .from("bug_reports")
+        .update({ status: newStatus })
+        .eq("id", id);
+      if (error) throw error;
+      setBugs((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, status: newStatus } : b))
+      );
+      toast.success(
+        newStatus === "resolvido" ? "Bug marcado como resolvido ✅" : "Bug reaberto"
+      );
+    } catch (err: unknown) {
+      toast.error(
+        `Erro: ${err instanceof Error ? err.message : "Erro desconhecido"}`
+      );
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
+  const filteredBugs = bugs.filter((b) =>
+    filter === "todos" ? true : b.status === filter
+  );
+
+  const countAbertos = bugs.filter((b) => b.status === "aberto").length;
+  const countResolvidos = bugs.filter((b) => b.status === "resolvido").length;
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-2xl bg-[#1a1917] border border-[#2e2c29] rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col max-h-[85vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29] shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="relative w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center">
+              <Bell size={15} className="text-amber-400" />
+              {countAbertos > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center rounded-full bg-orange-500 text-[9px] font-bold text-white">
+                  {countAbertos > 9 ? "9+" : countAbertos}
+                </span>
+              )}
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-[#e8e2d8]">Notificações de Bugs</h2>
+              <p className="text-[10px] text-[#7a7268]">
+                {countAbertos} aberto{countAbertos !== 1 ? "s" : ""} · {countResolvidos} resolvido{countResolvidos !== 1 ? "s" : ""}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchBugs}
+              disabled={loading}
+              className="w-7 h-7 flex items-center justify-center rounded-xl text-[#7a7268] hover:text-amber-400 hover:bg-[#2e2c29] transition-colors"
+              title="Recarregar"
+            >
+              <Loader2 size={14} className={loading ? "animate-spin text-amber-400" : ""} />
+            </button>
+            <button
+              onClick={onClose}
+              className="w-7 h-7 flex items-center justify-center rounded-xl text-[#7a7268] hover:text-[#e8e2d8] hover:bg-[#2e2c29] transition-colors"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div className="px-5 py-3 border-b border-[#2e2c29] shrink-0 flex gap-1.5">
+          {(
+            [
+              { key: "todos", label: "Todos", count: bugs.length },
+              { key: "aberto", label: "Abertos", count: countAbertos },
+              { key: "resolvido", label: "Resolvidos", count: countResolvidos },
+            ] as { key: typeof filter; label: string; count: number }[]
+          ).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                filter === tab.key
+                  ? "bg-amber-500 border-amber-400 text-[#111]"
+                  : "bg-[#111010] border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] hover:border-[#7a7268]"
+              }`}
+            >
+              {tab.label}
+              <span
+                className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                  filter === tab.key ? "bg-black/20 text-[#111]" : "bg-[#2e2c29] text-[#7a7268]"
+                }`}
+              >
+                {tab.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Bug list */}
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-3">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div className="w-7 h-7 rounded-full border-2 border-amber-500/20 border-t-amber-500 animate-spin" />
+              <p className="text-xs text-[#7a7268]">Carregando reports...</p>
+            </div>
+          ) : filteredBugs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+              <CheckCircle size={36} className="text-emerald-500/40" />
+              <div>
+                <p className="text-sm font-semibold text-[#e8e2d8]">
+                  {filter === "aberto" ? "Nenhum bug aberto" : "Nenhum report aqui"}
+                </p>
+                <p className="text-xs text-[#7a7268] mt-0.5">
+                  {filter === "aberto"
+                    ? "Ótimo! Tudo funcionando."
+                    : "Tente outro filtro."}
+                </p>
+              </div>
+            </div>
+          ) : (
+            filteredBugs.map((bug) => (
+              <BugCard
+                key={bug.id}
+                bug={bug}
+                onToggleStatus={() => handleMarkResolved(bug.id, bug.status)}
+                isResolving={resolvingId === bug.id}
+              />
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sub-componente: Card de Bug ──────────────────────────────────────────────
+
+function BugCard({
+  bug,
+  onToggleStatus,
+  isResolving,
+}: {
+  bug: BugReport;
+  onToggleStatus: () => void;
+  isResolving: boolean;
+}) {
+  const [imgOpen, setImgOpen] = useState(false);
+
+  const formattedDate = new Date(bug.created_at).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const isResolved = bug.status === "resolvido";
+
+  return (
+    <>
+      <div
+        className={`rounded-xl border p-4 transition-all ${
+          isResolved
+            ? "border-emerald-500/20 bg-emerald-500/5 opacity-70"
+            : "border-[#2e2c29] bg-[#111010]"
+        }`}
+      >
+        {/* Top row */}
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              className={`shrink-0 w-2 h-2 rounded-full mt-0.5 ${
+                isResolved ? "bg-emerald-500" : "bg-orange-400"
+              }`}
+            />
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-[#e8e2d8] truncate">{bug.user_nome}</p>
+              <p className="text-[10px] text-[#4a4844]">{formattedDate}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span
+              className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${
+                isResolved
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                  : "bg-orange-500/10 text-orange-400 border-orange-500/25"
+              }`}
+            >
+              {isResolved ? "RESOLVIDO" : "ABERTO"}
+            </span>
+            <button
+              onClick={onToggleStatus}
+              disabled={isResolving}
+              title={isResolved ? "Reabrir bug" : "Marcar como resolvido"}
+              className={`w-7 h-7 flex items-center justify-center rounded-xl border transition-all ${
+                isResolved
+                  ? "border-[#2e2c29] text-[#7a7268] hover:text-orange-400 hover:border-orange-500/40 bg-[#1a1917]"
+                  : "border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 bg-emerald-500/5"
+              } disabled:opacity-40 disabled:pointer-events-none`}
+            >
+              {isResolving ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : isResolved ? (
+                <X size={12} />
+              ) : (
+                <CheckCircle size={12} />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Descrição */}
+        <p className="text-xs text-[#c8c0b4] leading-relaxed whitespace-pre-wrap break-words">
+          {bug.descricao}
+        </p>
+
+        {/* Imagem (miniatura clicável) */}
+        {bug.image_url && (
+          <div className="mt-3">
+            <button
+              onClick={() => setImgOpen(true)}
+              className="group relative overflow-hidden rounded-lg border border-[#2e2c29] hover:border-amber-500/40 transition-all"
+              title="Ver imagem em tamanho completo"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={bug.image_url}
+                alt="Screenshot do bug"
+                className="w-full max-h-28 object-cover group-hover:opacity-90 transition-opacity"
+              />
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 transition-opacity">
+                <span className="text-[10px] font-bold text-white bg-black/60 px-2 py-1 rounded-lg">
+                  Ver completo
+                </span>
+              </div>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Lightbox */}
+      {imgOpen && bug.image_url && (
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
+          onClick={() => setImgOpen(false)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={bug.image_url}
+            alt="Screenshot completo"
+            className="max-w-full max-h-full rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setImgOpen(false)}
+            className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-black/60 text-white hover:bg-red-500/70 transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
