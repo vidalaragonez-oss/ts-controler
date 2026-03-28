@@ -2254,58 +2254,60 @@ const backToDashboard = () => {
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
+            <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3 w-full mb-6">
+              {/* Busca — ocupa linha inteira no mobile, flex-1 no desktop */}
+              <div className="relative w-full sm:flex-1">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#7a7268] pointer-events-none select-none" />
                 <input type="text" value={clientSearch} onChange={e=>setClientSearch(e.target.value)}
                   placeholder="Buscar cliente por nome..."
                   className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl pl-10 pr-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#7a7268] outline-none focus:border-amber-500/60 transition-colors"/>
               </div>
-<div className="flex flex-col sm:flex-row gap-2 shrink-0">
-  
-  {/* -- FILTRO DE GESTOR -- */}
-  <div className="relative sm:w-48">
-    <select value={gestorFilter} onChange={e=>setGestorFilter(e.target.value)}
-      className="w-full appearance-none bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 pr-10 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors cursor-pointer">
-      <option value="">Todos os gestores</option>
-      {gestorOptions.map(g=><option key={g} value={g}>{g}</option>)}
-    </select>
-    <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268]" />
-  </div>
 
-  {/* -- FILTRO DE STATUS -- */}
-  <div className="relative sm:w-48">
-    <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
-      className="w-full appearance-none bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 pr-10 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors cursor-pointer">
-      <option value="todos">Todos os status</option>
-      <option value="ativos">Ativos</option>
-      <option value="sem_camp">Pausados/Sem Camp.</option>
-      <option value="cancelados">Cancelados</option>
-    </select>
-    <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268]" />
-  </div>
+              {/* -- FILTRO DE GESTOR -- */}
+              <div className="relative w-full sm:w-48">
+                <select value={gestorFilter} onChange={e=>setGestorFilter(e.target.value)}
+                  className="w-full appearance-none bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 pr-10 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors cursor-pointer">
+                  <option value="">Todos os gestores</option>
+                  {gestorOptions.map(g=><option key={g} value={g}>{g}</option>)}
+                </select>
+                <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268]" />
+              </div>
 
-</div>
-              <button
-                onClick={()=>setSortMode(m=>m==="alfabetica"?"personalizada":"alfabetica")}
-                className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
-                  sortMode==="personalizada"
-                    ?"bg-amber-500/10 border-amber-500/40 text-amber-400 hover:bg-amber-500/20"
-                    :"bg-[#201f1d] border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] hover:border-[#7a7268]"
-                }`}>
-                {sortMode==="alfabetica" ? (
-                  <><svg width="14" height="14" viewBox="0 0 28 16" fill="currentColor"><text x="0" y="13" fontSize="13" fontWeight="bold">AZ</text></svg><span className="hidden sm:inline">A-Z</span></>
-                ) : (
-                  <><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="8" y1="2" x2="8" y2="14"/><polyline points="4,6 8,2 12,6"/><polyline points="4,10 8,14 12,10" opacity="0.5"/></svg><span className="hidden sm:inline">Ordem</span></>
-                )}
-              </button>
-              <div className="flex items-center bg-[#201f1d] border border-[#2e2c29] rounded-xl p-1 shrink-0">
-                {([["grid","M 0 0 h7v7H0z M9 0h7v7H9z M0 9h7v7H0z M9 9h7v7H9z"],["list","M0 1h16v2.5H0z M0 6.75h16V9.25H0z M0 12.5h16V15H0z"]] as [ViewMode,string][]).map(([v,d])=>(
-                  <button key={v} onClick={()=>setViewMode(v)}
-                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${viewMode===v?"bg-amber-500 text-[#111]":"text-[#7a7268] hover:text-[#e8e2d8]"}`}>
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d={d}/></svg>
-                  </button>
-                ))}
+              {/* -- FILTRO DE STATUS -- */}
+              <div className="relative w-full sm:w-48">
+                <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
+                  className="w-full appearance-none bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 pr-10 py-2.5 text-sm text-[#e8e2d8] outline-none focus:border-amber-500/60 transition-colors cursor-pointer">
+                  <option value="todos">Todos os status</option>
+                  <option value="ativos">Ativos</option>
+                  <option value="sem_camp">Pausados/Sem Camp.</option>
+                  <option value="cancelados">Cancelados</option>
+                </select>
+                <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#7a7268]" />
+              </div>
+
+              {/* -- Linha de controles: Ordenação + View toggle (lado a lado no mobile) -- */}
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-center">
+                <button
+                  onClick={()=>setSortMode(m=>m==="alfabetica"?"personalizada":"alfabetica")}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all flex-1 sm:flex-none ${
+                    sortMode==="personalizada"
+                      ?"bg-amber-500/10 border-amber-500/40 text-amber-400 hover:bg-amber-500/20"
+                      :"bg-[#201f1d] border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] hover:border-[#7a7268]"
+                  }`}>
+                  {sortMode==="alfabetica" ? (
+                    <><svg width="14" height="14" viewBox="0 0 28 16" fill="currentColor"><text x="0" y="13" fontSize="13" fontWeight="bold">AZ</text></svg><span>A-Z</span></>
+                  ) : (
+                    <><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="8" y1="2" x2="8" y2="14"/><polyline points="4,6 8,2 12,6"/><polyline points="4,10 8,14 12,10" opacity="0.5"/></svg><span>Ordem</span></>
+                  )}
+                </button>
+                <div className="flex items-center bg-[#201f1d] border border-[#2e2c29] rounded-xl p-1">
+                  {([["grid","M 0 0 h7v7H0z M9 0h7v7H9z M0 9h7v7H0z M9 9h7v7H9z"],["list","M0 1h16v2.5H0z M0 6.75h16V9.25H0z M0 12.5h16V15H0z"]] as [ViewMode,string][]).map(([v,d])=>(
+                    <button key={v} onClick={()=>setViewMode(v)}
+                      className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${viewMode===v?"bg-amber-500 text-[#111]":"text-[#7a7268] hover:text-[#e8e2d8]"}`}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d={d}/></svg>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
