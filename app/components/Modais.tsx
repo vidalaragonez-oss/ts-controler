@@ -1028,15 +1028,6 @@ export function NewLeadDialog({ open, onClose, onSave }: NewLeadDialogProps) {
 // Cole estes dois componentes no final do arquivo existente (antes do último })
 // e adicione os exports correspondentes.
 
-// ─── Imports adicionais necessários (adicionar ao topo de Modais.tsx) ────────
-// import { AlertTriangle, Bell, CheckCircle, ImageIcon, X, Loader2 } from "lucide-react";
-// (verifique quais já existem no arquivo e adicione apenas os que faltam)
-
-import { useState, useRef, useCallback, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
-import { toast } from "sonner";
-import { AlertTriangle, Bell, CheckCircle, ImageIcon, X, Loader2, Bug } from "lucide-react";
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface BugReport {
