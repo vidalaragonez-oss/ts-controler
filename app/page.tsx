@@ -38,13 +38,17 @@ import {
   Circle,
   Pencil,
   Calendar,
-  MoreHorizontal
+  MoreHorizontal,
+  Bug,
+  Bell,
 } from "lucide-react";
 import {
   NovaOperacaoModal,
   SettingsModal,
   ClienteModal,
   NewLeadDialog,
+  ReportBugModal,
+  AdminBugsModal,
   type Cliente,
   type ClienteStatus,
   type Operacao,
@@ -1619,6 +1623,10 @@ export default function Home() {
   // ── Botão Voltar ao Topo ──────────────────────────────────────────────────────
   const [showScrollTop, setShowScrollTop] = useState(false);
 
+  // ── Bug Reports ───────────────────────────────────────────────────────────────
+  const [isBugModalOpen, setIsBugModalOpen]   = useState(false);
+  const [isAdminBugsOpen, setIsAdminBugsOpen] = useState(false);
+
   useEffect(() => {
     // Escuta erros globais para sabermos exatamente o que quebrou em produção
     const handleError = (e: ErrorEvent) => toast.error(`Render Error: ${e.message}`);
@@ -2143,6 +2151,40 @@ const backToDashboard = () => {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+
+            {/* ── Saudação personalizada (desktop) ── */}
+            {perfil && (
+              <span className="hidden lg:flex items-center gap-1.5 text-xs text-[#7a7268] mr-1">
+                Olá,{" "}
+                <span className="font-bold text-[#e8e2d8]">{perfil.nome}</span>{" "}
+                👋
+              </span>
+            )}
+
+            {/* ── Botão: Notificações de Bugs (somente admin) ── */}
+            {perfil?.role === "admin" && (
+              <button
+                onClick={() => setIsAdminBugsOpen(true)}
+                title="Notificações de Bugs"
+                className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-amber-400 hover:border-amber-500/40 transition-colors"
+              >
+                <Bell size={14} />
+                <span className="hidden md:inline">Bugs</span>
+              </button>
+            )}
+
+            {/* ── Botão: Reportar Bug (todos os usuários) ── */}
+            {perfil && (
+              <button
+                onClick={() => setIsBugModalOpen(true)}
+                title="Reportar Bug"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-orange-400 hover:border-orange-500/40 transition-colors"
+              >
+                <Bug size={14} />
+                <span className="hidden md:inline">Reportar Bug</span>
+              </button>
+            )}
+
             {clienteAtivo ? (
               <>
                
@@ -2585,6 +2627,25 @@ const backToDashboard = () => {
         />
       )}
       <NewLeadDialog open={newLeadOpen} onClose={()=>setNewLeadOpen(false)} onSave={handleSaveNewLead}/>
+
+      {/* ── Modal: Reportar Bug ── */}
+      {perfil && (
+        <ReportBugModal
+          open={isBugModalOpen}
+          onClose={() => setIsBugModalOpen(false)}
+          userId={perfil.user_id}
+          userNome={perfil.nome}
+        />
+      )}
+
+      {/* ── Modal: Admin — Painel de Bugs (somente admin) ── */}
+      {perfil?.role === "admin" && (
+        <AdminBugsModal
+          open={isAdminBugsOpen}
+          onClose={() => setIsAdminBugsOpen(false)}
+        />
+      )}
+
       {/* ── Botão Flutuante: Voltar ao Topo ── */}
       {showScrollTop && (
         <button
