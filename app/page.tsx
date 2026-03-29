@@ -1075,6 +1075,14 @@ function ClientActionMenu({ onEdit, onDeactivate, onDelete, isInactive }: {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── Meta status dot ─────────────────────────────────────────────────────────
+type OtherCampaignDetail = {
+  name: string;
+  objective: string;
+  result_label: string;
+  result_count: number;
+  spend: number;
+};
+
 type MetaInsightData = {
   account_status: number;
   spend: number;
@@ -1083,19 +1091,18 @@ type MetaInsightData = {
   total_leads: number;
   cpl: number;
   currency: string;
-  // Por objetivo
+  // Formulário
   form_leads: number;
   form_spend: number;
   form_cpl: number;
+  // Mensagens
   msg_leads: number;
   msg_spend: number;
   msg_cpl: number;
-  // Tráfego
-  traffic_clicks: number;
-  traffic_spend: number;
-  // Engajamento / Awareness
-  engagements: number;
-  engagement_spend: number;
+  // Outros Objetivos (tráfego, awareness, engajamento, etc.)
+  other_spend: number;
+  other_count: number;
+  other_campaigns: OtherCampaignDetail[];
   loading: boolean;
   error?: string;
 } | null;
@@ -1132,127 +1139,49 @@ function MetaDot({ accountId, data, onRefresh }: {
   );
 }
 
+// MetaSummary — Visão Externa (lista de clientes)
+// Mostra apenas Formulário + Mensagens (dados dos últimos 7 dias).
+// "Outros Objetivos" são omitidos intencionalmente aqui.
 function MetaSummary({ data }: { data: MetaInsightData }) {
-  const [hovered, setHovered] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
   if (!data || data.loading || data.error || !data.account_status) return null;
 
   const fmt    = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtInt = (v: number) => v.toLocaleString("pt-BR");
-  const symbol = (data.currency ?? "BRL") === "USD" ? "$" : "R$";
+  const symbol = (data.currency ?? "BRL") === "USD" ? "US$" : "R$";
 
-  const totalLeads  = data.total_leads ?? 0;
-  const hasLeads    = totalLeads > 0;
-  const trafficOnly = !hasLeads && (data.traffic_clicks ?? 0) > 0;
-  const engageOnly  = !hasLeads && !trafficOnly && (data.engagements ?? 0) > 0;
+  // Só soma form + msg — gasto total "de negócio"
+  const bizLeads = (data.form_leads ?? 0) + (data.msg_leads ?? 0);
+  const bizSpend = (data.form_spend ?? 0) + (data.msg_spend ?? 0);
+  const bizCpl   = bizLeads > 0 ? bizSpend / bizLeads : 0;
 
-  // ── Tooltip rows ──────────────────────────────────────────────────────────
-  type TooltipRow = { label: string; value: string; color: string };
-  const tooltipRows: TooltipRow[] = [];
+  // Se não houve nenhum gasto relevante, não mostra nada
+  if (bizSpend === 0 && data.spend === 0) return null;
 
-  if ((data.form_leads ?? 0) > 0) {
-    tooltipRows.push({
-      label: `${fmtInt(data.form_leads)} Leads de Formulário`,
-      value: `Gasto: ${symbol} ${fmt(data.form_spend ?? 0)}  ·  CPL ${symbol} ${fmt(data.form_cpl ?? 0)}`,
-      color: "text-emerald-400",
-    });
-  }
-  if ((data.msg_leads ?? 0) > 0) {
-    tooltipRows.push({
-      label: `${fmtInt(data.msg_leads)} Conversas Iniciadas`,
-      value: `Gasto: ${symbol} ${fmt(data.msg_spend ?? 0)}  ·  CPL ${symbol} ${fmt(data.msg_cpl ?? 0)}`,
-      color: "text-blue-400",
-    });
-  }
-  if ((data.traffic_clicks ?? 0) > 0) {
-    tooltipRows.push({
-      label: `${fmtInt(data.traffic_clicks ?? 0)} Cliques no Link`,
-      value: `Gasto: ${symbol} ${fmt(data.traffic_spend ?? 0)}`,
-      color: "text-amber-400",
-    });
-  }
-  if ((data.engagements ?? 0) > 0) {
-    tooltipRows.push({
-      label: `${fmtInt(data.engagements ?? 0)} Interações / Engajamento`,
-      value: `Gasto: ${symbol} ${fmt(data.engagement_spend ?? 0)}`,
-      color: "text-purple-400",
-    });
-  }
-
-  const hasTooltip = tooltipRows.length > 1;
+  // Gasto exibido: gasto de negócio se existir, caso contrário total (ex: só "outros")
+  const displaySpend = bizSpend > 0 ? bizSpend : data.spend;
 
   return (
-    <div
-      ref={ref}
-      className="relative"
-      onMouseEnter={() => hasTooltip && setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {/* ── Pills row ── */}
-      <div className={`flex items-center gap-1.5 flex-wrap ${hasTooltip ? "cursor-help" : ""}`}>
-        {/* Gasto */}
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#201f1d] border border-[#2e2c29] text-[#7a7268]">
-          <Activity size={9} className="text-[#4a4844]" />
-          {symbol} {fmt(data.spend)}
-        </span>
+    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+      {/* Gasto */}
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#201f1d] border border-[#2e2c29] text-[#7a7268]">
+        <Activity size={9} className="text-[#4a4844]" />
+        {symbol} {fmt(displaySpend)}
+      </span>
 
-        {/* Leads / Cliques / Engajamento */}
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
-          trafficOnly
-            ? "bg-amber-500/8 border-amber-500/25 text-amber-400"
-            : engageOnly
-            ? "bg-purple-500/8 border-purple-500/25 text-purple-400"
-            : "bg-blue-500/8 border-blue-500/25 text-blue-400"
-        }`}>
+      {/* Leads — só aparece se houver leads reais */}
+      {bizLeads > 0 && (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/8 border border-blue-500/25 text-blue-400">
           <Target size={9} />
-          {trafficOnly
-            ? `${fmtInt(data.traffic_clicks ?? 0)} cliques`
-            : engageOnly
-            ? `${fmtInt(data.engagements ?? 0)} interações`
-            : `${fmtInt(totalLeads)} leads`}
+          {fmtInt(bizLeads)} leads
         </span>
+      )}
 
-        {/* CPL — só se tiver leads reais */}
-        {hasLeads && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/8 border border-emerald-500/25 text-emerald-400">
-            <Zap size={9} />
-            CPL {symbol} {fmt(data.cpl)}
-          </span>
-        )}
-
-        {hasTooltip && (
-          <span className="text-[8px] text-[#3a3835] leading-none select-none">▾</span>
-        )}
-      </div>
-
-      {/* ── Tooltip dinâmico ── */}
-      {hovered && hasTooltip && (
-        <div
-          className="absolute left-0 top-[calc(100%+4px)] z-[150] min-w-[220px] max-w-[280px] rounded-xl border border-[#2e2c29] bg-[#111010] shadow-2xl shadow-black/70 px-3 py-2.5 space-y-2"
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-        >
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844] border-b border-[#2e2c29] pb-1.5 mb-1">
-            Detalhes por Objetivo
-          </p>
-          {tooltipRows.map((row, i) => (
-            <div key={i} className="space-y-0.5">
-              <p className={`text-[10px] font-semibold ${row.color}`}>{row.label}</p>
-              <p className="text-[9px] text-[#7a7268]">{row.value}</p>
-            </div>
-          ))}
-          <div className="border-t border-[#2e2c29] pt-1.5 mt-1">
-            <p className="text-[9px] text-[#4a4844]">
-              Total gasto: <span className="text-[#c8c0b4] font-semibold">{symbol} {fmt(data.spend)}</span>
-            </p>
-            {hasLeads && (
-              <p className="text-[9px] text-[#4a4844]">
-                CPL médio (leads/msg): <span className="text-[#c8c0b4] font-semibold">{symbol} {fmt(data.cpl)}</span>
-              </p>
-            )}
-          </div>
-        </div>
+      {/* CPL — só aparece se houver leads */}
+      {bizLeads > 0 && (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/8 border border-emerald-500/25 text-emerald-400">
+          <Zap size={9} />
+          CPL {symbol} {fmt(bizCpl)}
+        </span>
       )}
     </div>
   );
@@ -1784,11 +1713,13 @@ function renderRadar({
   onCustomApply: () => void;
 }) {
   const fmt = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const symbol = !data || (data.currency ?? "BRL") === "BRL" ? "R$" : "$";
+  const fmtInt = (v: number) => v.toLocaleString("pt-BR");
+  const symbol = !data || (data.currency ?? "BRL") === "BRL" ? "R$" : "US$";
 
-  const hasForm = data && !data.loading && !data.error && data.form_leads > 0;
-  const hasMsg  = data && !data.loading && !data.error && data.msg_leads  > 0;
-  const hasData = data && !data.loading && !data.error && data.account_status >= 1;
+  const hasForm  = data && !data.loading && !data.error && data.form_leads > 0;
+  const hasMsg   = data && !data.loading && !data.error && data.msg_leads  > 0;
+  const hasOther = data && !data.loading && !data.error && (data.other_spend ?? 0) > 0;
+  const hasData  = data && !data.loading && !data.error && data.account_status >= 1;
 
   return (
     <div className="rounded-xl border border-blue-500/20 bg-[#111827]/60 p-4 space-y-3">
@@ -1850,8 +1781,8 @@ function renderRadar({
         </div>
       )}
 
-      {/* Dados: bloco consolidado */}
-      {hasData && !hasForm && !hasMsg && (
+      {/* Dados: bloco consolidado (nenhum objetivo de lead/msg) */}
+      {hasData && !hasForm && !hasMsg && !hasOther && (
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-0.5">
             <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Total</p>
@@ -1869,25 +1800,29 @@ function renderRadar({
       )}
 
       {/* Dados: blocos separados por objetivo */}
-      {hasData && (hasForm || hasMsg) && (
+      {hasData && (hasForm || hasMsg || hasOther) && (
         <div className="space-y-2">
           {/* Totais no topo */}
           <div className="flex items-center justify-between pb-2 border-b border-[#2e2c29]">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <div>
                 <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Total</p>
                 <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.spend)}</p>
               </div>
-              <div className="w-px h-8 bg-[#2e2c29]" />
-              <div>
-                <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">CPL Médio</p>
-                <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.cpl)}</p>
-              </div>
-              <div className="w-px h-8 bg-[#2e2c29]" />
-              <div>
-                <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Total Leads</p>
-                <p className="text-sm font-extrabold text-[#e8e2d8]">{data!.total_leads}</p>
-              </div>
+              {(hasForm || hasMsg) && (
+                <>
+                  <div className="w-px h-8 bg-[#2e2c29]" />
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">CPL Médio</p>
+                    <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.cpl)}</p>
+                  </div>
+                  <div className="w-px h-8 bg-[#2e2c29]" />
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Total Leads</p>
+                    <p className="text-sm font-extrabold text-[#e8e2d8]">{data!.total_leads}</p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -1902,10 +1837,10 @@ function renderRadar({
               <div className="flex items-center gap-4 flex-1 flex-wrap">
                 <div>
                   <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Leads</p>
-                  <p className="text-xs font-extrabold text-[#e8e2d8]">{data!.form_leads}</p>
+                  <p className="text-xs font-extrabold text-[#e8e2d8]">{fmtInt(data!.form_leads)}</p>
                 </div>
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Est.</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto</p>
                   <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.form_spend)}</p>
                 </div>
                 <div>
@@ -1926,11 +1861,11 @@ function renderRadar({
               </div>
               <div className="flex items-center gap-4 flex-1 flex-wrap">
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Leads</p>
-                  <p className="text-xs font-extrabold text-[#e8e2d8]">{data!.msg_leads}</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Conversas</p>
+                  <p className="text-xs font-extrabold text-[#e8e2d8]">{fmtInt(data!.msg_leads)}</p>
                 </div>
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Est.</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto</p>
                   <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.msg_spend)}</p>
                 </div>
                 <div>
@@ -1940,11 +1875,56 @@ function renderRadar({
               </div>
             </div>
           )}
+
+          {/* Bloco: Outros Objetivos — tráfego, awareness, engajamento, etc. */}
+          {hasOther && (
+            <div className="rounded-lg bg-[#201f1d] border border-[#2e2c29] overflow-hidden">
+              {/* Cabeçalho do bloco */}
+              <div className="flex items-center justify-between px-3 py-2 border-b border-[#2e2c29]">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/25 uppercase tracking-wide">
+                  Outros Objetivos
+                </span>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto</p>
+                    <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.other_spend)}</p>
+                  </div>
+                  {(data!.other_count ?? 0) > 0 && (
+                    <div className="text-right">
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Resultados</p>
+                      <p className="text-xs font-extrabold text-[#e8e2d8]">{fmtInt(data!.other_count)}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* Linhas por campanha */}
+              <div className="divide-y divide-[#1a1917]">
+                {(data!.other_campaigns ?? []).map((c, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-semibold text-[#c8c0b4] truncate">{c.name}</p>
+                      <p className="text-[9px] text-[#4a4844] truncate">{c.objective.replace("OUTCOME_", "").replace(/_/g, " ")}</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 text-right">
+                      <div>
+                        <p className="text-[9px] font-bold text-[#4a4844]">{c.result_label}</p>
+                        <p className="text-[10px] font-extrabold text-amber-300">{fmtInt(c.result_count)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-bold text-[#4a4844]">Gasto</p>
+                        <p className="text-[10px] font-extrabold text-[#7a7268]">{symbol} {fmt(c.spend)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Sem dados */}
-      {data && !data.loading && !data.error && data.account_status >= 1 && data.total_leads === 0 && data.spend === 0 && (
+      {data && !data.loading && !data.error && data.account_status >= 1 && data.total_leads === 0 && data.spend === 0 && (data.other_spend ?? 0) === 0 && (
         <p className="text-[10px] text-[#4a4844] italic text-center py-1">Nenhum dado para o período selecionado.</p>
       )}
     </div>
@@ -2404,7 +2384,7 @@ export default function Home() {
     since?: string,
     until?: string,
   ) => {
-    const zero = { account_status: 0, spend: 0, leads: 0, messages: 0, total_leads: 0, cpl: 0, currency: "BRL", form_leads: 0, form_spend: 0, form_cpl: 0, msg_leads: 0, msg_spend: 0, msg_cpl: 0 };
+    const zero = { account_status: 0, spend: 0, leads: 0, messages: 0, total_leads: 0, cpl: 0, currency: "BRL", form_leads: 0, form_spend: 0, form_cpl: 0, msg_leads: 0, msg_spend: 0, msg_cpl: 0, other_spend: 0, other_count: 0, other_campaigns: [] as OtherCampaignDetail[] };
     setMetaInsights(prev => ({ ...prev, [clienteId]: { ...zero, loading: true } }));
     try {
       const params = new URLSearchParams({ action: "insights", account_id: accountId });
@@ -2413,7 +2393,7 @@ export default function Home() {
         params.set("since", since);
         params.set("until", until);
       } else {
-        // Padrão: últimos 7 dias
+        // Padrão dos badges externos: últimos 7 dias
         const today = new Date();
         const from  = new Date(today);
         from.setDate(today.getDate() - 6);
@@ -2427,26 +2407,29 @@ export default function Home() {
       setMetaInsights(prev => ({
         ...prev,
         [clienteId]: {
-          account_status: json.account_status,
-          spend:          json.spend,
-          leads:          json.leads          ?? 0,
-          messages:       json.messages       ?? 0,
-          total_leads:    json.total_leads,
-          cpl:            json.cpl,
-          currency:       json.currency       ?? "BRL",
-          form_leads:     json.form_leads     ?? 0,
-          form_spend:     json.form_spend     ?? 0,
-          form_cpl:       json.form_cpl       ?? 0,
-          msg_leads:      json.msg_leads      ?? 0,
-          msg_spend:      json.msg_spend      ?? 0,
-          msg_cpl:        json.msg_cpl        ?? 0,
-          loading:        false,
+          account_status:  json.account_status,
+          spend:           json.spend,
+          leads:           json.leads           ?? 0,
+          messages:        json.messages        ?? 0,
+          total_leads:     json.total_leads,
+          cpl:             json.cpl,
+          currency:        json.currency        ?? "BRL",
+          form_leads:      json.form_leads      ?? 0,
+          form_spend:      json.form_spend      ?? 0,
+          form_cpl:        json.form_cpl        ?? 0,
+          msg_leads:       json.msg_leads       ?? 0,
+          msg_spend:       json.msg_spend       ?? 0,
+          msg_cpl:         json.msg_cpl         ?? 0,
+          other_spend:     json.other_spend     ?? 0,
+          other_count:     json.other_count     ?? 0,
+          other_campaigns: json.other_campaigns ?? [],
+          loading:         false,
         },
       }));
     } catch (err: unknown) {
       setMetaInsights(prev => ({
         ...prev,
-        [clienteId]: { account_status: -1, spend: 0, leads: 0, messages: 0, total_leads: 0, cpl: 0, currency: "BRL", form_leads: 0, form_spend: 0, form_cpl: 0, msg_leads: 0, msg_spend: 0, msg_cpl: 0, loading: false, error: (err as Error).message },
+        [clienteId]: { account_status: -1, spend: 0, leads: 0, messages: 0, total_leads: 0, cpl: 0, currency: "BRL", form_leads: 0, form_spend: 0, form_cpl: 0, msg_leads: 0, msg_spend: 0, msg_cpl: 0, other_spend: 0, other_count: 0, other_campaigns: [], loading: false, error: (err as Error).message },
       }));
     }
   };
