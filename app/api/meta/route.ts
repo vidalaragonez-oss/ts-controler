@@ -57,16 +57,18 @@ export async function GET(req: NextRequest) {
 
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
-      // 1. Status da conta
+      // 1. Status + moeda da conta
       const accountData = await metaFetch(`/${accountId}`, {
         access_token: token,
         fields: "account_status,name,currency",
       });
 
-      // 2. Insights no nível de campanha — traz objective para agrupar corretamente
+      // 2. Insights por CAMPANHA — resolve dois problemas:
+      //    a) gasto real inclui campanhas sem conversões
+      //    b) action_types por campanha não sofrem agrupamento duplo
       const insightParams: Record<string, string> = {
         access_token: token,
-        fields: "campaign_name,objective,spend,actions,cost_per_action_type,clicks",
+        fields: "campaign_name,spend,actions,cost_per_action_type",
         level: "campaign",
         limit: "500",
       };
@@ -77,175 +79,128 @@ export async function GET(req: NextRequest) {
         insightParams.date_preset = "maximum";
       }
 
-      // ── Buckets por família de objetivo ──────────────────────────────────────
-      // form     → OUTCOME_LEADS / LEAD_GENERATION — leads de formulário
-      // messages → OUTCOME_MESSAGES / OUTCOME_ENGAGEMENT — conversas iniciadas
-      // other    → tudo o mais (tráfego, awareness, engajamento, app install…)
-      //            agrupados como "Outros Objetivos" com resultado principal
+      // Tipos de lead que NÃO devem ser somados juntos (são aliases do mesmo evento)
+      // Hierarquia Meta: lead > leadgen_grouped (ambos representam leads de formulário)
+      // Regra: usar APENAS "lead" para formulário — é o mais granular e sem duplicação
+      const FORM_LEAD_TYPE  = "lead";
+      const MSG_LEAD_TYPES  = new Set([
+        "onsite_conversion.messaging_conversation_started_7d",
+        "onsite_conversion.lead_grouped",
+      ]);
+      // Tipos a IGNORAR pois são agrupamentos que duplicam "lead"
+      const SKIP_LEAD_TYPES = new Set(["leadgen_grouped"]);
 
-      let totalSpend  = 0;
-      let formLeads   = 0;
-      let formSpend   = 0;
-      let msgLeads    = 0;
-      let msgSpend    = 0;
-
-      // "Outros Objetivos" — bucket unificado para qualquer objective que não
-      // seja formulário ou mensagens. Guardamos o resultado mais relevante de
-      // cada campanha e acumulamos gasto + contagem.
-      type OtherCampaign = {
-        name:         string;   // campaign_name
-        objective:    string;   // objective raw
-        result_label: string;   // ex: "Cliques", "Engajamentos", "Alcance"
-        result_count: number;
-        spend:        number;
+      type CampaignRow = {
+        campaign_name: string;
+        spend: string;
+        form_leads: number;
+        msg_leads: number;
+        form_cpl: number;
+        msg_cpl: number;
       };
-      const otherCampaigns: OtherCampaign[] = [];
+
+      let totalSpend    = 0;
+      let totalFormLeads = 0;
+      let totalMsgLeads  = 0;
+      const campaigns: CampaignRow[] = [];
 
       try {
         const insightData = await metaFetch(`/${accountId}/insights`, insightParams);
-        const campaigns: Record<string, unknown>[] = insightData.data ?? [];
+        const rows: Record<string, unknown>[] = insightData.data ?? [];
 
-        for (const row of campaigns) {
-          const objective    = String(row.objective ?? "").toUpperCase();
-          const campaignName = String(row.campaign_name ?? "—");
-          const spend        = parseFloat(String(row.spend ?? "0"));
-          const actions: { action_type: string; value: string }[] = (row.actions as typeof actions) ?? [];
-          const clicks       = parseInt(String((row.clicks as string) ?? "0"), 10);
+        for (const row of rows) {
+          const campSpend = parseFloat((row.spend as string) ?? "0");
+          totalSpend += campSpend;
 
-          if (spend <= 0) continue; // ignora campanhas sem gasto
-          totalSpend += spend;
+          const actions: { action_type: string; value: string }[] =
+            (row.actions as { action_type: string; value: string }[]) ?? [];
+          const cpaList: { action_type: string; value: string }[] =
+            (row.cost_per_action_type as { action_type: string; value: string }[]) ?? [];
 
-          // ── Formulário (leads nativos) ─────────────────────────────────
-          if (objective === "OUTCOME_LEADS" || objective === "LEAD_GENERATION") {
-            let count = 0;
-            for (const act of actions) {
-              if (
-                act.action_type === "lead" ||
-                act.action_type === "leadgen_grouped" ||
-                act.action_type === "onsite_conversion.lead_grouped"
-              ) count += parseInt(act.value ?? "0", 10);
+          let campFormLeads = 0;
+          let campMsgLeads  = 0;
+
+          for (const act of actions) {
+            if (SKIP_LEAD_TYPES.has(act.action_type)) continue; // ignora alias duplicado
+            if (act.action_type === FORM_LEAD_TYPE) {
+              campFormLeads += parseInt(act.value ?? "0", 10);
             }
-            if (count === 0) {
-              for (const act of actions) {
-                if (act.action_type === "link_click" || act.action_type === "landing_page_view")
-                  count += parseInt(act.value ?? "0", 10);
-              }
+            if (MSG_LEAD_TYPES.has(act.action_type)) {
+              campMsgLeads += parseInt(act.value ?? "0", 10);
             }
-            formLeads += count;
-            formSpend += spend;
-
-          // ── Mensagens / Conversas ──────────────────────────────────────
-          } else if (
-            objective === "OUTCOME_MESSAGES" || objective === "MESSAGES" ||
-            objective === "OUTCOME_ENGAGEMENT" || objective === "POST_ENGAGEMENT"
-          ) {
-            let count = 0;
-            for (const act of actions) {
-              if (
-                act.action_type === "onsite_conversion.messaging_conversation_started_7d" ||
-                act.action_type === "onsite_conversion.lead_grouped" ||
-                act.action_type === "onsite_conversion.total_messaging_connection"
-              ) count += parseInt(act.value ?? "0", 10);
-            }
-            if (count === 0) {
-              for (const act of actions) {
-                if (act.action_type === "lead") count += parseInt(act.value ?? "0", 10);
-              }
-            }
-            msgLeads += count;
-            msgSpend += spend;
-
-          // ── Outros Objetivos ───────────────────────────────────────────
-          } else {
-            // Escolhe o resultado mais relevante para o objetivo
-            let resultLabel = "Resultado";
-            let resultCount = 0;
-
-            if (
-              objective === "OUTCOME_TRAFFIC" ||
-              objective === "LINK_CLICKS" ||
-              objective === "LANDING_PAGE_VIEWS"
-            ) {
-              resultLabel = "Cliques no Link";
-              for (const act of actions) {
-                if (act.action_type === "link_click" || act.action_type === "landing_page_view")
-                  resultCount += parseInt(act.value ?? "0", 10);
-              }
-              if (resultCount === 0) resultCount = clicks;
-
-            } else if (objective === "OUTCOME_AWARENESS" || objective === "REACH" || objective === "BRAND_AWARENESS") {
-              resultLabel = "Alcance";
-              // Reach não vem em actions — usamos clicks ou 0
-              resultCount = clicks;
-
-            } else if (objective === "VIDEO_VIEWS") {
-              resultLabel = "Visualizações";
-              for (const act of actions) {
-                if (act.action_type === "video_view")
-                  resultCount += parseInt(act.value ?? "0", 10);
-              }
-
-            } else {
-              // Genérico: pega o maior valor em actions como proxy de resultado
-              resultLabel = "Engajamentos";
-              for (const act of actions) {
-                if (
-                  act.action_type === "post_engagement" ||
-                  act.action_type === "page_engagement"
-                ) resultCount += parseInt(act.value ?? "0", 10);
-              }
-              if (resultCount === 0 && actions.length > 0) {
-                resultCount = parseInt(actions[0].value ?? "0", 10);
-              }
-            }
-
-            otherCampaigns.push({
-              name:         campaignName,
-              objective:    objective,
-              result_label: resultLabel,
-              result_count: resultCount,
-              spend,
-            });
           }
+
+          totalFormLeads += campFormLeads;
+          totalMsgLeads  += campMsgLeads;
+
+          // CPL por campanha — direto do cost_per_action_type
+          let campFormCpl = 0;
+          let campMsgCpl  = 0;
+          for (const cpa of cpaList) {
+            if (SKIP_LEAD_TYPES.has(cpa.action_type)) continue;
+            if (cpa.action_type === FORM_LEAD_TYPE) {
+              const v = parseFloat(cpa.value ?? "0");
+              if (v > 0) campFormCpl = v;
+            }
+            if (MSG_LEAD_TYPES.has(cpa.action_type)) {
+              const v = parseFloat(cpa.value ?? "0");
+              if (v > 0 && (campMsgCpl === 0 || v < campMsgCpl)) campMsgCpl = v;
+            }
+          }
+
+          // Fallback: calcula CPL pela proporção de spend/leads desta campanha
+          const campTotal = campFormLeads + campMsgLeads;
+          if (campTotal > 0) {
+            if (campFormCpl === 0 && campFormLeads > 0) {
+              campFormCpl = (campSpend * (campFormLeads / campTotal)) / campFormLeads;
+            }
+            if (campMsgCpl === 0 && campMsgLeads > 0) {
+              campMsgCpl = (campSpend * (campMsgLeads / campTotal)) / campMsgLeads;
+            }
+          }
+
+          campaigns.push({
+            campaign_name: (row.campaign_name as string) ?? "Campanha",
+            spend: campSpend.toFixed(2),
+            form_leads: campFormLeads,
+            msg_leads:  campMsgLeads,
+            form_cpl:   campFormCpl,
+            msg_cpl:    campMsgCpl,
+          });
         }
       } catch {
         // Conta sem dados de insight — retorna zeros
       }
 
-      // ── CPL calculado APENAS sobre gasto form + msg (leads reais) ─────────
-      const totalLeads   = formLeads + msgLeads;
-      const leadGenSpend = formSpend + msgSpend;
-      const cpl          = totalLeads > 0 ? leadGenSpend / totalLeads : 0;
-      const formCpl      = formLeads  > 0 ? formSpend / formLeads  : 0;
-      const msgCpl       = msgLeads   > 0 ? msgSpend  / msgLeads   : 0;
+      const totalLeads = totalFormLeads + totalMsgLeads;
+      const cpl = totalLeads > 0 ? totalSpend / totalLeads : 0;
 
-      // Totais do bucket "Outros"
-      const otherSpend  = otherCampaigns.reduce((s, c) => s + c.spend, 0);
-      const otherCount  = otherCampaigns.reduce((s, c) => s + c.result_count, 0);
+      // CPL global por objetivo: spend proporcional / qtd leads
+      const formSpend = totalLeads > 0 && totalFormLeads > 0
+        ? totalSpend * (totalFormLeads / totalLeads) : 0;
+      const msgSpend = totalLeads > 0 && totalMsgLeads > 0
+        ? totalSpend * (totalMsgLeads / totalLeads) : 0;
+      const formCpl = totalFormLeads > 0 ? formSpend / totalFormLeads : 0;
+      const msgCpl  = totalMsgLeads  > 0 ? msgSpend  / totalMsgLeads  : 0;
 
       return NextResponse.json({
-        account_status:    accountData.account_status as number,
-        account_name:      accountData.name           as string,
-        currency:          (accountData.currency      as string) ?? "BRL",
-        // ── Totais gerais ────────────────────────────────────────────────
-        spend:             totalSpend,
-        total_leads:       totalLeads,
+        account_status: accountData.account_status as number,
+        account_name:   accountData.name as string,
+        currency:       (accountData.currency as string) ?? "BRL",
+        spend:          totalSpend,
+        leads:          totalFormLeads,
+        messages:       totalMsgLeads,
+        total_leads:    totalLeads,
         cpl,
-        // ── Formulário ───────────────────────────────────────────────────
-        form_leads:        formLeads,
-        form_spend:        formSpend,
-        form_cpl:          formCpl,
-        // ── Mensagens ────────────────────────────────────────────────────
-        msg_leads:         msgLeads,
-        msg_spend:         msgSpend,
-        msg_cpl:           msgCpl,
-        // ── Outros Objetivos (tráfego, awareness, engajamento…) ──────────
-        other_spend:       otherSpend,
-        other_count:       otherCount,
-        other_campaigns:   otherCampaigns,  // detalhamento interno completo
-        // ── Legado ───────────────────────────────────────────────────────
-        leads:             formLeads,
-        messages:          msgLeads,
+        // Por objetivo (totais)
+        form_leads: totalFormLeads,
+        form_spend: formSpend,
+        form_cpl:   formCpl,
+        msg_leads:  totalMsgLeads,
+        msg_spend:  msgSpend,
+        msg_cpl:    msgCpl,
+        // Detalhamento por campanha
+        campaigns,
       });
     }
 
