@@ -377,8 +377,162 @@ function exportCSV(leads: Lead[], clienteNome: string) {
   toast.success("CSV exportado!");
 }
 
-async function exportPDF(leads: Lead[], clienteNome: string, operacaoNome: string) {
-  if (!leads.length) { toast.error("Nenhum lead para exportar."); return; }
+// ─── Tipos para exportação de performance ─────────────────────────────────────
+
+interface PdfExportOptions {
+  includeDashboard: boolean;
+  includeRadar: boolean;
+  includeLeads: boolean;
+}
+
+interface RadarCampaignRow {
+  campaign_name: string;
+  objective_label: string;
+  spend: string;
+  form_leads: number;
+  msg_leads: number;
+  form_cpl: number;
+  msg_cpl: number;
+}
+
+interface RadarSnapshot {
+  spend: number;
+  cpl: number;
+  total_leads: number;
+  currency: string;
+  campaigns: RadarCampaignRow[];
+}
+
+interface DashboardSnapshot {
+  leadsPorPlataforma: { name: string; value: number }[];
+  leadsPorData: { data: string; leads: number }[];
+  totalLeads: number;
+}
+
+// ─── Modal de seleção de conteúdo do PDF ──────────────────────────────────────
+
+function ExportPDFModal({
+  open,
+  hasRadar,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  hasRadar: boolean;
+  onConfirm: (opts: PdfExportOptions) => void;
+  onClose: () => void;
+}) {
+  const [opts, setOpts] = useState<PdfExportOptions>({
+    includeDashboard: true,
+    includeRadar: hasRadar,
+    includeLeads: true,
+  });
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setOpts({ includeDashboard: true, includeRadar: hasRadar, includeLeads: true });
+      setExporting(false);
+    }
+  }, [open, hasRadar]);
+
+  if (!open) return null;
+
+  const toggle = (k: keyof PdfExportOptions) =>
+    setOpts(prev => ({ ...prev, [k]: !prev[k] }));
+
+  const noneSelected = !opts.includeDashboard && !opts.includeRadar && !opts.includeLeads;
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center"
+      style={{ backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full sm:max-w-sm bg-[#1a1917] border border-[#2e2c29] rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2e2c29] bg-[#111010]">
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-0.5">Exportar</p>
+            <h2 className="text-sm font-bold text-[#e8e2d8] flex items-center gap-2">
+              <FileText size={14} className="text-amber-500" /> Relatório de Performance
+            </h2>
+          </div>
+          <button onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] hover:text-[#e8e2d8] transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-5 space-y-3">
+          <p className="text-[10px] text-[#7a7268]">Selecione o que incluir no PDF:</p>
+
+          {([
+            { key: "includeDashboard" as const, label: "Resumo do Dashboard", desc: "Totais por plataforma e gráfico de leads por dia" },
+            ...(hasRadar ? [{ key: "includeRadar" as const, label: "Radar Meta Ads", desc: "Tabela de campanhas com gasto, leads e CPL" }] : []),
+            { key: "includeLeads" as const, label: "Lista Detalhada de Leads", desc: "Tabela completa com nome, telefone, data e plataforma" },
+          ]).map(item => (
+            <button key={item.key} type="button" onClick={() => toggle(item.key)}
+              className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl border transition-all text-left ${
+                opts[item.key]
+                  ? "border-amber-500/40 bg-amber-500/5"
+                  : "border-[#2e2c29] bg-[#201f1d] hover:border-[#3a3835]"
+              }`}>
+              <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                opts[item.key] ? "bg-amber-500 border-amber-500" : "border-[#3a3835]"
+              }`}>
+                {opts[item.key] && <Check size={10} className="text-[#111] stroke-[3]" />}
+              </div>
+              <div>
+                <p className={`text-xs font-semibold transition-colors ${opts[item.key] ? "text-[#e8e2d8]" : "text-[#7a7268]"}`}>
+                  {item.label}
+                </p>
+                <p className="text-[10px] text-[#4a4844] mt-0.5">{item.desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 pb-5 flex gap-3">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-[#e8e2d8] transition-colors">
+            Cancelar
+          </button>
+          <button
+            disabled={noneSelected || exporting}
+            onClick={async () => { setExporting(true); await onConfirm(opts); setExporting(false); onClose(); }}
+            className="flex-1 py-2.5 rounded-xl bg-amber-500 text-[#111] text-xs font-bold hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2 shadow-[0_2px_12px_rgba(245,166,35,0.3)]">
+            {exporting
+              ? <><Loader2 size={12} className="animate-spin" /> Gerando...</>
+              : <><Download size={12} /> Gerar PDF</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── exportPDF refatorado — Relatório de Performance ─────────────────────────
+
+async function exportPDF(
+  leads: Lead[],
+  clienteNome: string,
+  operacaoNome: string,
+  opts: PdfExportOptions,
+  periodLabel: string,
+  dashboard: DashboardSnapshot | null,
+  radar: RadarSnapshot | null,
+) {
+  if (!opts.includeLeads && !opts.includeDashboard && !opts.includeRadar) {
+    toast.error("Selecione ao menos uma seção para exportar.");
+    return;
+  }
+  if (opts.includeLeads && !leads.length) {
+    toast.error("Nenhum lead encontrado para o período selecionado.");
+    return;
+  }
 
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
@@ -386,214 +540,284 @@ async function exportPDF(leads: Lead[], clienteNome: string, operacaoNome: strin
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const now = new Date().toLocaleDateString("pt-BR", {
-    day: "2-digit", month: "2-digit", year: "numeric"
-  });
+  const now = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const fmt2 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const symbol = radar && radar.currency === "USD" ? "$" : "R$";
 
-  // ─── HELPERS ───────────────────────────────────────────────────────────────
+  // ─── HELPERS ──────────────────────────────────────────────────────────────
 
   const drawPageHeader = () => {
     doc.setFillColor(17, 16, 16);
     doc.rect(0, 0, pageW, 22, "F");
-
     doc.setFillColor(245, 166, 35);
     doc.rect(0, 22, pageW, 0.6, "F");
-
-    doc.setFillColor(245, 166, 35);
     doc.rect(0, 0, 3, 22, "F");
-
     doc.setTextColor(245, 166, 35);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
     doc.text("TS HUB", 8, 10);
-
     doc.setTextColor(80, 78, 75);
     doc.setFontSize(13);
     doc.text("·", 31, 10);
-
     doc.setTextColor(232, 226, 216);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.text(clienteNome.toUpperCase(), 36, 10);
-
     doc.setTextColor(110, 106, 100);
     doc.setFontSize(7);
     doc.text(`OPERAÇÃO: ${operacaoNome.toUpperCase()}`, 8, 17);
-    doc.text(`TOTAL: ${leads.length} LEADS`, 80, 17);
-
-    doc.setTextColor(110, 106, 100);
-    doc.setFontSize(7);
+    doc.text(`PERÍODO: ${periodLabel.toUpperCase()}`, 80, 17);
     doc.text(`GERADO EM: ${now}`, pageW - 8, 17, { align: "right" });
   };
 
-  const drawBadge = (
-    x: number, y: number, label: string,
-    bgR: number, bgG: number, bgB: number,
-    textR = 255, textG = 255, textB = 255
-  ) => {
-    const badgeW = 30;
-    const badgeH = 5;
-    const radius = 1.5;
+  const drawFooter = () => {
+    const pg = (doc.internal as any).getCurrentPageInfo?.()?.pageNumber ?? "–";
+    doc.setFontSize(6.5);
+    doc.setTextColor(180, 177, 173);
+    doc.text(`TS HUB  ·  CONFIDENCIAL  ·  PÁGINA ${pg}`, pageW / 2, pageH - 5, { align: "center" });
+  };
 
+  const drawBadge = (x: number, y: number, label: string, bgR: number, bgG: number, bgB: number, tR = 255, tG = 255, tB = 255) => {
     doc.setFillColor(bgR, bgG, bgB);
-    doc.roundedRect(x, y - 3.5, badgeW, badgeH, radius, radius, "F");
-
-    doc.setTextColor(textR, textG, textB);
+    doc.roundedRect(x, y - 3.5, 30, 5, 1.5, 1.5, "F");
+    doc.setTextColor(tR, tG, tB);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(6);
-    doc.text(label.toUpperCase(), x + badgeW / 2, y - 0.5, { align: "center" });
+    doc.text(label.toUpperCase(), x + 15, y - 0.5, { align: "center" });
   };
 
   const getBadgeColors = (plataforma: string): [number, number, number, number, number, number] => {
     const p = (plataforma || "").toLowerCase();
-    if (p.includes("google"))    return [52, 168, 83,   255, 255, 255];
+    if (p.includes("google"))    return [52, 168, 83, 255, 255, 255];
     if (p.includes("meta") || p.includes("facebook")) return [24, 119, 242, 255, 255, 255];
-    if (p.includes("instagram")) return [193, 53, 132,  255, 255, 255];
-    if (p.includes("tiktok"))    return [0, 0, 0,        255, 255, 255];
-    if (p.includes("linkedin"))  return [0, 119, 181,   255, 255, 255];
     return [80, 78, 75, 200, 198, 195];
   };
 
-  // ─── PÁGINA 01: CAPA PREMIUM ───────────────────────────────────────────────
+  // ─── CAPA ─────────────────────────────────────────────────────────────────
 
   doc.setFillColor(17, 16, 16);
   doc.rect(0, 0, pageW, pageH, "F");
-
   doc.setFillColor(245, 166, 35);
   doc.rect(0, 0, 4, pageH, "F");
-
   doc.setFillColor(40, 38, 35);
   doc.rect(20, pageH / 2 - 22, pageW - 40, 0.4, "F");
   doc.rect(20, pageH / 2 + 18, pageW - 40, 0.4, "F");
-
   doc.setTextColor(245, 166, 35);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(30);
-  doc.text("RELATÓRIO DE LEADS", 20, pageH / 2 - 8);
-
+  doc.setFontSize(28);
+  doc.text("RELATÓRIO DE PERFORMANCE", 20, pageH / 2 - 8);
   doc.setTextColor(232, 226, 216);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(17);
   doc.text(clienteNome.toUpperCase(), 20, pageH / 2 + 6);
-
   doc.setFontSize(8);
   doc.setTextColor(80, 78, 75);
-  doc.text(`OPERAÇÃO: ${operacaoNome}  ·  ${leads.length} LEADS REGISTRADOS  ·  ${now}`, 20, pageH - 18);
+  const sections = [
+    opts.includeDashboard && "Dashboard",
+    opts.includeRadar && radar && "Radar Meta Ads",
+    opts.includeLeads && `${leads.length} Leads`,
+  ].filter(Boolean).join("  ·  ");
+  doc.text(`${sections}  ·  PERÍODO: ${periodLabel}  ·  ${now}`, 20, pageH - 18);
   doc.text("TS HUB  •  SISTEMA DE GESTÃO E PERFORMANCE", pageW - 20, pageH - 18, { align: "right" });
 
-  // ─── PÁGINA 02 EM DIANTE: TABELA DE DADOS ─────────────────────────────────
+  // ─── SEÇÃO: DASHBOARD ──────────────────────────────────────────────────────
 
-  doc.addPage();
-  drawPageHeader();
+  if (opts.includeDashboard && dashboard) {
+    doc.addPage();
+    drawPageHeader();
 
-  autoTable(doc, {
-    startY: 28,
-    margin: { left: 10, right: 10 },
-    tableWidth: pageW - 20,
+    let y = 32;
+    doc.setFillColor(245, 166, 35);
+    doc.rect(10, y, pageW - 20, 0.4, "F");
+    y += 5;
+    doc.setTextColor(245, 166, 35);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("RESUMO DO PERÍODO", 10, y);
+    y += 6;
 
-    head: [["#", "NOME", "EMAIL", "TELEFONE", "DATA", "PLATAFORMA"]],
+    // Cards totais
+    const cardW = (pageW - 20) / 3 - 3;
+    const cardH = 18;
+    const cardItems = [
+      { label: "TOTAL DE LEADS", value: String(dashboard.totalLeads) },
+      { label: "PLATAFORMA CAMPEÃ", value: dashboard.leadsPorPlataforma[0]?.name ?? "—" },
+      { label: "LEADS NESSE PERÍODO", value: `${dashboard.totalLeads} lead${dashboard.totalLeads !== 1 ? "s" : ""}` },
+    ];
+    cardItems.forEach((card, i) => {
+      const cx = 10 + i * (cardW + 3);
+      doc.setFillColor(26, 25, 23);
+      doc.roundedRect(cx, y, cardW, cardH, 2, 2, "F");
+      doc.setTextColor(120, 116, 110);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(card.label, cx + 4, y + 5);
+      doc.setTextColor(232, 226, 216);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(card.value, cx + 4, y + 13);
+    });
+    y += cardH + 6;
 
-    body: leads.map((l, i) => [
-      i + 1,
-      l.nome      || "Não Identificado",
-      l.email     || "—",
-      l.telefone  || "—",
-      l.data      || "—",
-      l.plataforma || "—"
-    ]),
+    // Tabela: leads por plataforma
+    autoTable(doc, {
+      startY: y,
+      margin: { left: 10, right: pageW / 2 + 3 },
+      head: [["PLATAFORMA", "LEADS", "%"]],
+      body: dashboard.leadsPorPlataforma.map(p => [
+        p.name,
+        p.value,
+        `${Math.round((p.value / dashboard.totalLeads) * 100)}%`,
+      ]),
+      styles: { font: "helvetica", fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 4, right: 4 }, textColor: [40, 38, 35], fillColor: [255, 255, 255] },
+      headStyles: { fillColor: [26, 26, 26], textColor: [245, 166, 35], fontStyle: "bold", fontSize: 7.5 },
+      alternateRowStyles: { fillColor: [249, 249, 249] },
+      columnStyles: { 1: { halign: "center" }, 2: { halign: "center" } },
+    });
 
-    styles: {
-      font: "helvetica",
-      fontSize: 8,
-      cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 },
-      textColor: [40, 38, 35],
-      fillColor: [255, 255, 255],
-      lineColor: [230, 228, 225],
-      lineWidth: 0,
-    },
+    // Tabela: leads por dia
+    const maxY = (doc as any).lastAutoTable?.finalY ?? y;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: pageW / 2 + 3, right: 10 },
+      head: [["DIA", "LEADS"]],
+      body: dashboard.leadsPorData.map(d => [d.data, d.leads]),
+      styles: { font: "helvetica", fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 4, right: 4 }, textColor: [40, 38, 35], fillColor: [255, 255, 255] },
+      headStyles: { fillColor: [26, 26, 26], textColor: [245, 166, 35], fontStyle: "bold", fontSize: 7.5 },
+      alternateRowStyles: { fillColor: [249, 249, 249] },
+      columnStyles: { 1: { halign: "center" } },
+    });
 
-    headStyles: {
-      fillColor: [26, 26, 26],
-      textColor: [245, 166, 35],
-      fontStyle: "bold",
-      fontSize: 7.5,
-      cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
-      lineWidth: 0,
-    },
+    drawFooter();
+  }
 
-    alternateRowStyles: {
-      fillColor: [249, 249, 249],
-    },
+  // ─── SEÇÃO: RADAR META ADS ─────────────────────────────────────────────────
 
-    columnStyles: {
-      0: { cellWidth: 10,  halign: "center", textColor: [160, 157, 153] },
-      1: { cellWidth: 48 },
-      2: { cellWidth: 58 },
-      3: { cellWidth: 40 },
-      4: { cellWidth: 25,  halign: "center" },
-      5: { cellWidth: 57,  halign: "center" },
-    },
+  if (opts.includeRadar && radar) {
+    doc.addPage();
+    drawPageHeader();
 
-    didParseCell: (data) => {
-      if (data.section !== "body") return;
+    let y = 32;
+    doc.setFillColor(24, 119, 242);
+    doc.rect(10, y, pageW - 20, 0.4, "F");
+    y += 5;
+    doc.setTextColor(24, 119, 242);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("RADAR META ADS", 10, y);
+    y += 7;
 
-      const raw = (data.cell.raw as string) || "";
-      const col = data.column.index;
+    // Totais
+    const totaisItems = [
+      { label: "GASTO TOTAL", value: `${symbol} ${fmt2(radar.spend)}` },
+      { label: "CPL MÉDIO",   value: radar.cpl > 0 ? `${symbol} ${fmt2(radar.cpl)}` : "—" },
+      { label: "TOTAL LEADS", value: String(radar.total_leads) },
+    ];
+    const tW = (pageW - 20) / 3 - 3;
+    totaisItems.forEach((item, i) => {
+      const cx = 10 + i * (tW + 3);
+      doc.setFillColor(17, 30, 51);
+      doc.roundedRect(cx, y, tW, 16, 2, 2, "F");
+      doc.setTextColor(100, 140, 200);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(item.label, cx + 4, y + 5);
+      doc.setTextColor(232, 226, 216);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(item.value, cx + 4, y + 13);
+    });
+    y += 22;
 
-      if (col === 1) {
-        const lower = raw.toLowerCase();
-        if (
-          lower.includes("não identificado") ||
-          lower.includes("nao identificado") ||
-          lower.includes("não qualificado") ||
-          lower.includes("nao qualificado")
-        ) {
+    // Tabela de campanhas
+    autoTable(doc, {
+      startY: y,
+      margin: { left: 10, right: 10 },
+      tableWidth: pageW - 20,
+      head: [["CAMPANHA", "OBJETIVO", "GASTO", "LEADS", "CPL"]],
+      body: radar.campaigns.map(c => {
+        const leads = c.form_leads + c.msg_leads;
+        const cpl = c.form_cpl || c.msg_cpl || 0;
+        return [
+          c.campaign_name,
+          c.objective_label || "—",
+          `${symbol} ${parseFloat(c.spend).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          leads > 0 ? String(leads) : "—",
+          leads > 0 && cpl > 0 ? `${symbol} ${fmt2(cpl)}` : "—",
+        ];
+      }),
+      styles: { font: "helvetica", fontSize: 8, cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 }, textColor: [40, 38, 35], fillColor: [255, 255, 255] },
+      headStyles: { fillColor: [17, 30, 51], textColor: [100, 160, 240], fontStyle: "bold", fontSize: 7.5 },
+      alternateRowStyles: { fillColor: [249, 249, 249] },
+      columnStyles: {
+        0: { cellWidth: "auto" },
+        1: { cellWidth: 30, halign: "center" },
+        2: { cellWidth: 28, halign: "right" },
+        3: { cellWidth: 16, halign: "center" },
+        4: { cellWidth: 28, halign: "right" },
+      },
+      foot: [[
+        "TOTAL", "",
+        `${symbol} ${fmt2(radar.spend)}`,
+        radar.total_leads > 0 ? String(radar.total_leads) : "—",
+        radar.cpl > 0 ? `${symbol} ${fmt2(radar.cpl)}` : "—",
+      ]],
+      footStyles: { fillColor: [26, 26, 26], textColor: [245, 166, 35], fontStyle: "bold", fontSize: 7.5, halign: "right" },
+      didDrawPage: drawFooter,
+    });
+  }
+
+  // ─── SEÇÃO: LISTA DE LEADS ─────────────────────────────────────────────────
+
+  if (opts.includeLeads && leads.length) {
+    doc.addPage();
+    drawPageHeader();
+
+    autoTable(doc, {
+      startY: 28,
+      margin: { left: 10, right: 10 },
+      tableWidth: pageW - 20,
+      head: [["#", "NOME", "EMAIL", "TELEFONE", "DATA", "PLATAFORMA"]],
+      body: leads.map((l, i) => [i + 1, l.nome || "Não Identificado", l.email || "—", l.telefone || "—", l.data || "—", l.plataforma || "—"]),
+      styles: { font: "helvetica", fontSize: 8, cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 }, textColor: [40, 38, 35], fillColor: [255, 255, 255], lineWidth: 0 },
+      headStyles: { fillColor: [26, 26, 26], textColor: [245, 166, 35], fontStyle: "bold", fontSize: 7.5, lineWidth: 0 },
+      alternateRowStyles: { fillColor: [249, 249, 249] },
+      columnStyles: {
+        0: { cellWidth: 10, halign: "center", textColor: [160, 157, 153] },
+        1: { cellWidth: 48 },
+        2: { cellWidth: 58 },
+        3: { cellWidth: 40 },
+        4: { cellWidth: 25, halign: "center" },
+        5: { cellWidth: 57, halign: "center" },
+      },
+      didParseCell: (data) => {
+        if (data.section !== "body") return;
+        const raw = (data.cell.raw as string) || "";
+        if (data.column.index === 1 && (raw.toLowerCase().includes("não identificado") || raw.toLowerCase().includes("nao identificado"))) {
           data.cell.styles.textColor = [170, 167, 163];
           data.cell.styles.fontStyle = "italic";
         }
-      }
+        if (data.column.index === 5) data.cell.styles.textColor = [255, 255, 255];
+      },
+      didDrawCell: (data) => {
+        if (data.section !== "body" || data.column.index !== 5) return;
+        const raw = (data.cell.raw as string) || "—";
+        if (raw === "—") return;
+        const [bgR, bgG, bgB, tR, tG, tB] = getBadgeColors(raw);
+        drawBadge(data.cell.x + (data.cell.width - 30) / 2, data.cell.y + data.cell.height / 2 + 2, raw, bgR, bgG, bgB, tR, tG, tB);
+      },
+      didDrawPage: drawFooter,
+    });
+  }
 
-      if (col === 5) {
-        data.cell.styles.textColor = [255, 255, 255];
-      }
-    },
+  const suffix = [
+    opts.includeDashboard && "dash",
+    opts.includeRadar && radar && "radar",
+    opts.includeLeads && "leads",
+  ].filter(Boolean).join("-");
 
-    didDrawCell: (data) => {
-      if (data.section !== "body" || data.column.index !== 5) return;
-
-      const raw = (data.cell.raw as string) || "—";
-      if (raw === "—") return;
-
-      const [bgR, bgG, bgB, tR, tG, tB] = getBadgeColors(raw);
-      const cx = data.cell.x + (data.cell.width - 30) / 2;
-      const cy = data.cell.y + data.cell.height / 2;
-
-      drawBadge(cx, cy + 2, raw, bgR, bgG, bgB, tR, tG, tB);
-    },
-
-    didDrawPage: () => {
-      drawPageHeader();
-
-      const totalPages = (doc.internal as any).getNumberOfPages
-        ? (doc.internal as any).getNumberOfPages()
-        : "–";
-      const currentPage = (doc.internal as any).getCurrentPageInfo
-        ? (doc.internal as any).getCurrentPageInfo().pageNumber
-        : "–";
-
-      doc.setFontSize(6.5);
-      doc.setTextColor(180, 177, 173);
-      doc.text(
-        `TS HUB  ·  CONFIDENCIAL  ·  PÁGINA ${currentPage}`,
-        pageW / 2,
-        pageH - 5,
-        { align: "center" }
-      );
-    },
-  });
-
-  doc.save(`leads_${clienteNome.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`);
-  toast.success("Relatório Premium exportado com sucesso!");
+  doc.save(`relatorio_${clienteNome.replace(/\s+/g, "_")}_${suffix}_${new Date().toISOString().slice(0, 10)}.pdf`);
+  toast.success("Relatório de Performance exportado!");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -678,20 +902,42 @@ function Dropzone({ onParsed }: { onParsed: (leads: Lead[]) => void }) {
 // EXPORT BAR
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ExportBar({ leads, clienteNome, operacaoNome, onNewLead }: { leads:Lead[]; clienteNome:string; operacaoNome:string; onNewLead:()=>void }) {
-  const [exporting, setExporting] = useState(false);
+function ExportBar({
+  leads, clienteNome, operacaoNome, onNewLead,
+  periodLabel, dashboard, radar,
+}: {
+  leads: Lead[];
+  clienteNome: string;
+  operacaoNome: string;
+  onNewLead: () => void;
+  periodLabel: string;
+  dashboard: DashboardSnapshot | null;
+  radar: RadarSnapshot | null;
+}) {
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+
   return (
-    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-      <button onClick={()=>exportCSV(leads,clienteNome)}
-        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-[#e8e2d8] hover:border-[#7a7268] transition-colors w-full sm:w-auto">
-        <Download size={12} /> CSV
-      </button>
-      <button onClick={async()=>{setExporting(true);await exportPDF(leads,clienteNome,operacaoNome);setExporting(false);}} disabled={exporting}
-        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-[#e8e2d8] hover:border-[#7a7268] transition-colors disabled:opacity-40 w-full sm:w-auto">
-        {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-        {exporting ? "PDF..." : "PDF"}
-      </button>
-    </div>
+    <>
+      <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+        <button onClick={() => exportCSV(leads, clienteNome)}
+          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-[#e8e2d8] hover:border-[#7a7268] transition-colors w-full sm:w-auto">
+          <Download size={12} /> CSV
+        </button>
+        <button onClick={() => setPdfModalOpen(true)}
+          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-[#e8e2d8] hover:border-[#7a7268] transition-colors w-full sm:w-auto">
+          <Download size={12} /> PDF
+        </button>
+      </div>
+
+      <ExportPDFModal
+        open={pdfModalOpen}
+        hasRadar={!!radar && (radar.campaigns?.length ?? 0) > 0}
+        onClose={() => setPdfModalOpen(false)}
+        onConfirm={async (opts) => {
+          await exportPDF(leads, clienteNome, operacaoNome, opts, periodLabel, dashboard, radar);
+        }}
+      />
+    </>
   );
 }
 
@@ -3048,7 +3294,50 @@ export default function Home() {
                   className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 text-[#111] text-xs font-bold hover:bg-amber-400 active:scale-95 transition-all w-full sm:w-auto">
                   <Plus size={14} /> Novo Lead
                 </button>
-                <ExportBar leads={filteredLeads} clienteNome={clienteAtivo.nome} operacaoNome={operacaoAtiva.nome} onNewLead={()=>setNewLeadOpen(true)}/>
+                <ExportBar
+                  leads={filteredLeads}
+                  clienteNome={clienteAtivo.nome}
+                  operacaoNome={operacaoAtiva.nome}
+                  onNewLead={() => setNewLeadOpen(true)}
+                  periodLabel={
+                    dateFrom && dateTo
+                      ? `${dateFrom.split("-").reverse().join("/")} → ${dateTo.split("-").reverse().join("/")}`
+                      : periodPreset === "max" ? "Todo o período"
+                      : periodPreset === "7d" ? "Últimos 7 dias"
+                      : periodPreset === "15d" ? "Últimos 15 dias"
+                      : periodPreset === "30d" ? "Últimos 30 dias"
+                      : periodPreset === "90d" ? "Últimos 90 dias"
+                      : "Período selecionado"
+                  }
+                  dashboard={(() => {
+                    if (!filteredLeads.length) return null;
+                    const byPlat: Record<string, number> = {};
+                    for (const l of filteredLeads) { const k = l.plataforma || "Sem plataforma"; byPlat[k] = (byPlat[k] ?? 0) + 1; }
+                    const leadsPorPlataforma = Object.entries(byPlat).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+                    const byDate: Record<string, number> = {};
+                    const byDateLabel: Record<string, string> = {};
+                    for (const l of filteredLeads) {
+                      const raw = l.data ?? "";
+                      const dmy = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+                      const ymd = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                      let label = "—"; let sortKey = "9999-99-99";
+                      if (dmy) { label = `${dmy[1]}/${dmy[2]}/${dmy[3].slice(2)}`; sortKey = `${dmy[3]}-${dmy[2]}-${dmy[1]}`; }
+                      else if (ymd) { label = `${ymd[3]}/${ymd[2]}/${ymd[1].slice(2)}`; sortKey = raw.slice(0, 10); }
+                      byDate[sortKey] = (byDate[sortKey] ?? 0) + 1; byDateLabel[sortKey] = label;
+                    }
+                    const leadsPorData = Object.keys(byDate).sort().map(k => ({ data: byDateLabel[k] ?? k, leads: byDate[k] }));
+                    return { leadsPorPlataforma, leadsPorData, totalLeads: filteredLeads.length };
+                  })()}
+                  radar={clienteAtivo.meta_ad_account_id && metaInsights[clienteAtivo.id]?.campaigns?.length
+                    ? {
+                        spend: metaInsights[clienteAtivo.id].spend,
+                        cpl: metaInsights[clienteAtivo.id].cpl,
+                        total_leads: metaInsights[clienteAtivo.id].total_leads,
+                        currency: metaInsights[clienteAtivo.id].currency,
+                        campaigns: metaInsights[clienteAtivo.id].campaigns,
+                      }
+                    : null}
+                />
               </div>
             </div>
 
@@ -3105,9 +3394,15 @@ export default function Home() {
                       onClick={()=>{
                         setPeriodPreset(p.key);
                         if (p.key!=="custom") {
-                          const today=new Date(); const fmt=(d:Date)=>d.toISOString().slice(0,10);
+                          const fmt=(d:Date)=>d.toISOString().slice(0,10);
                           if (p.key==="max"){setDateFrom("");setDateTo("");}
-                          else{const days=p.key==="7d"?7:p.key==="15d"?15:p.key==="30d"?30:90;const from=new Date(today);from.setDate(today.getDate()-(days-1));setDateFrom(fmt(from));setDateTo(fmt(today));}
+                          else{
+                            // Ontem como data final — exclui o dia de hoje (dados incompletos)
+                            const yesterday=new Date(); yesterday.setDate(yesterday.getDate()-1);
+                            const days=p.key==="7d"?7:p.key==="15d"?15:p.key==="30d"?30:90;
+                            const from=new Date(yesterday); from.setDate(yesterday.getDate()-(days-1));
+                            setDateFrom(fmt(from)); setDateTo(fmt(yesterday));
+                          }
                         }
                       }}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
