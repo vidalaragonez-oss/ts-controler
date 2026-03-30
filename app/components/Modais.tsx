@@ -1018,8 +1018,6 @@ export function ClienteModal({
             )}
           </div>
 
-          </div>
-
           {/* ── Metas e Controle de Investimento ───────────────────────────── */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
