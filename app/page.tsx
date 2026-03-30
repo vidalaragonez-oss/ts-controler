@@ -1433,10 +1433,65 @@ function MetaSummary({ data }: { data: MetaInsightData }) {
   );
 }
 
+// ─── MetaGoalBar — Barra de Progresso de Meta Mensal ─────────────────────────
+function MetaGoalBar({
+  meta,
+  leadsDoMes,
+}: {
+  meta: number;
+  leadsDoMes: number;
+}) {
+  if (!meta || meta <= 0) return null;
+
+  const hoje = new Date();
+  const diasNoMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
+  const diaAtual = hoje.getDate();
+  const proporcao = diaAtual / diasNoMes; // 0..1
+  const metaProporcional = meta * proporcao;
+  const pct = Math.min((leadsDoMes / meta) * 100, 100);
+  const pctDisplay = Math.round(pct);
+
+  // Saúde: compara leads reais com meta proporcional ao dia
+  const ratio = metaProporcional > 0 ? leadsDoMes / metaProporcional : 1;
+  const cor =
+    ratio >= 1
+      ? { bar: "bg-emerald-500", glow: "shadow-[0_0_8px_rgba(16,185,129,0.5)]", text: "text-emerald-400", badge: "bg-emerald-500/10 border-emerald-500/25 text-emerald-400" }
+      : ratio >= 0.8
+      ? { bar: "bg-amber-400",   glow: "shadow-[0_0_8px_rgba(251,191,36,0.4)]",  text: "text-amber-400",   badge: "bg-amber-500/10 border-amber-500/25 text-amber-400" }
+      : { bar: "bg-red-500",     glow: "shadow-[0_0_8px_rgba(239,68,68,0.4)]",   text: "text-red-400",     badge: "bg-red-500/10 border-red-500/30 text-red-400" };
+
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844] flex items-center gap-1">
+          <Target size={9} className="text-amber-500/60" /> Meta Mensal
+        </span>
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${cor.badge}`}>
+          {leadsDoMes}/{meta} leads · {pctDisplay}%
+        </span>
+      </div>
+      {/* Track */}
+      <div className="relative h-1.5 rounded-full bg-[#2e2c29] overflow-hidden">
+        {/* Marcador proporcional ao dia */}
+        <div
+          className="absolute top-0 h-full w-px bg-[#7a7268]/60 z-10"
+          style={{ left: `${Math.min(proporcao * 100, 99)}%` }}
+        />
+        {/* Barra de progresso */}
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${cor.bar} ${cor.glow}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Client Card ──────────────────────────────────────────────────────────────
-function ClientCard({ client, onSelect, onEdit, onDeactivate, onDelete, onToggleAlerta, metaData, onRefreshMeta, isDragging }: {
+function ClientCard({ client, onSelect, onEdit, onDeactivate, onDelete, onToggleAlerta, metaData, onRefreshMeta, isDragging, leadsDoMes }: {
   client:Cliente; onSelect:()=>void; onEdit:()=>void; onDeactivate:()=>void; onDelete:()=>void;
   onToggleAlerta:()=>void; metaData: MetaInsightData; onRefreshMeta:()=>void; isDragging?:boolean;
+  leadsDoMes?: number;
 }) {
   const st=clienteStatus(client);
   const gestorColor=client.gestor_estrategico==="Duda"?"bg-blue-600/20 text-blue-400 border-blue-500/30":
@@ -1477,6 +1532,9 @@ function ClientCard({ client, onSelect, onEdit, onDeactivate, onDelete, onToggle
         )):<span className="text-[#7a7268] text-xs italic">Nenhuma plataforma</span>}
       </div>
       <MetaSummary data={metaData} />
+      {client.meta_leads_mensal != null && (
+        <MetaGoalBar meta={client.meta_leads_mensal} leadsDoMes={leadsDoMes ?? 0} />
+      )}
       <div className="flex items-center gap-2 flex-wrap border-t border-[#2e2c29]/50 pt-2">
         <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#201f1d] border border-[#2e2c29] text-[#7a7268]">
           <Layers size={10} /> {client.gestor}
@@ -1947,6 +2005,8 @@ function renderRadar({
   onCustomFromChange,
   onCustomToChange,
   onCustomApply,
+  verbaMeta,
+  verbaGls,
 }: {
   data: MetaInsightData;
   preset: RadarPreset;
@@ -1957,6 +2017,8 @@ function renderRadar({
   onCustomFromChange: (v: string) => void;
   onCustomToChange: (v: string) => void;
   onCustomApply: () => void;
+  verbaMeta?: number | null;
+  verbaGls?: number | null;
 }) {
   const fmt = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtInt = (v: number) => v.toLocaleString("pt-BR");
@@ -2070,6 +2132,55 @@ function renderRadar({
                 </>
               )}
             </div>
+            {/* ── Comparativo de Verba ──────────────────────────────────────── */}
+            {verbaMeta != null && verbaMeta > 0 && data && !data.loading && !data.error && (
+              (() => {
+                const gasto = data.spend ?? 0;
+                const pct = verbaMeta > 0 ? Math.min((gasto / verbaMeta) * 100, 999) : 0;
+                const restante = verbaMeta - gasto;
+                const cor = pct >= 100
+                  ? { bar: "bg-red-500",     text: "text-red-400",     badge: "bg-red-500/10 border-red-500/25" }
+                  : pct >= 80
+                  ? { bar: "bg-amber-400",   text: "text-amber-400",   badge: "bg-amber-500/10 border-amber-500/25" }
+                  : { bar: "bg-blue-500",    text: "text-blue-400",    badge: "bg-blue-500/10 border-blue-500/20" };
+                return (
+                  <div className="mt-3 p-3 rounded-xl bg-blue-500/5 border border-blue-500/15 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[9px] font-bold uppercase tracking-widest text-blue-400 flex items-center gap-1">
+                        <Activity size={9} /> Controle de Verba Meta Ads
+                      </span>
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${cor.badge} ${cor.text}`}>
+                        {Math.round(pct)}% utilizado
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div>
+                        <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">Gasto Real</p>
+                        <p className={`text-xs font-extrabold ${cor.text}`}>{symbol} {fmt(gasto)}</p>
+                      </div>
+                      <div className="w-px h-6 bg-[#2e2c29]" />
+                      <div>
+                        <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">Verba Planejada</p>
+                        <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(verbaMeta)}</p>
+                      </div>
+                      <div className="w-px h-6 bg-[#2e2c29]" />
+                      <div>
+                        <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">{restante >= 0 ? "Saldo" : "Excedente"}</p>
+                        <p className={`text-xs font-extrabold ${restante >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {restante >= 0 ? "" : "-"}{symbol} {fmt(Math.abs(restante))}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="relative h-1.5 rounded-full bg-[#2e2c29] overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-700 ${cor.bar}`}
+                        style={{ width: `${Math.min(pct, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()
+            )}
           </div>
 
           {/* Bloco: Formulário */}
@@ -2179,13 +2290,15 @@ function renderRadar({
 
 // ─── RadarWrapper: componente com estado próprio ──────────────────────────────
 function RadarWrapper({
-  clienteId, accountId, token, data, onFetch,
+  clienteId, accountId, token, data, onFetch, verbaMeta, verbaGls,
 }: {
   clienteId: string;
   accountId: string;
   token: string | null;
   data: MetaInsightData;
   onFetch: (clienteId: string, accountId: string, token: string | null, since: string, until: string) => void;
+  verbaMeta?: number | null;
+  verbaGls?: number | null;
 }) {
   const [preset, setPreset]         = useState<RadarPreset>("7d");
   const [customFrom, setCustomFrom] = useState("");
@@ -2220,6 +2333,8 @@ function RadarWrapper({
     onCustomFromChange: setCustomFrom,
     onCustomToChange: setCustomTo,
     onCustomApply: handleCustomApply,
+    verbaMeta,
+    verbaGls,
   });
 }
 
@@ -2285,6 +2400,9 @@ function normalizeCliente(raw: Record<string, unknown>): Cliente {
     meta_ad_account_id: (raw.meta_ad_account_id as string) ?? null,
     meta_access_token:  (raw.meta_access_token  as string) ?? null,
     meta_status:        (raw.meta_status         as string) ?? "sem_link",
+    meta_leads_mensal:  raw.meta_leads_mensal  != null ? Number(raw.meta_leads_mensal)  : null,
+    verba_meta_ads:     raw.verba_meta_ads     != null ? Number(raw.verba_meta_ads)     : null,
+    verba_gls:          raw.verba_gls          != null ? Number(raw.verba_gls)          : null,
   } as Cliente;
 }
 
@@ -2310,6 +2428,9 @@ export default function Home() {
   const [clienteAtivo, setClienteAtivo]       = useState<Cliente | null>(null);
   const [clienteModal, setClienteModal]       = useState<{ mode:"new"|"edit"; client?: Cliente } | null>(null);
   const [editModal, setEditModal]             = useState<Cliente | null>(null);
+
+  // ── Leads do Mês por Cliente (para barra de meta) ──────────────────────────
+  const [leadsDoMesPorCliente, setLeadsDoMesPorCliente] = useState<Record<string, number>>({});
 
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [currentPage, setCurrentPage]   = useState(1);
@@ -2468,7 +2589,7 @@ export default function Home() {
     try {
       const { data, error } = await supabase
         .from("clientes")
-        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status")
+        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls")
         .eq("operacao_id",operacaoId)
         .order("ordem",{ascending:true,nullsFirst:false})
         .order("created_at",{ascending:true});
@@ -2481,12 +2602,38 @@ export default function Home() {
           fetchMetaInsights(c.id, c.meta_ad_account_id, c.meta_access_token ?? null);
         }
       });
+      // Busca leads do mês atual por cliente (para barra de meta)
+      fetchLeadsDoMesBatch(rows.map(r => r.id));
     } catch (err: unknown) {
       toast.error(`Erro ao carregar clientes: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
     } finally {
       setClientesLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Busca contagem de leads do mês atual para cada cliente (para barra de meta)
+  const fetchLeadsDoMesBatch = useCallback(async (clienteIds: string[]) => {
+    if (!clienteIds.length) return;
+    try {
+      const now = new Date();
+      const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+      const mesFim    = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+      const { data, error } = await supabase
+        .from("leads")
+        .select("cliente, data")
+        .in("cliente", clienteIds)
+        .gte("data", mesInicio)
+        .lte("data", mesFim);
+      if (error) throw error;
+      const counts: Record<string, number> = {};
+      for (const row of (data ?? []) as { cliente: string; data: string }[]) {
+        if (row.cliente) counts[row.cliente] = (counts[row.cliente] ?? 0) + 1;
+      }
+      setLeadsDoMesPorCliente(counts);
+    } catch {
+      // silencia — não é crítico
+    }
   }, []);
 
   const handleSelectOperacao = (op: Operacao) => {
@@ -2851,6 +2998,7 @@ export default function Home() {
     onRefreshMeta:   () => c.meta_ad_account_id
       ? fetchMetaInsights(c.id, c.meta_ad_account_id, c.meta_access_token ?? null, dateFrom || undefined, dateTo || undefined)
       : undefined,
+    leadsDoMes:      leadsDoMesPorCliente[c.id] ?? 0,
   });
 
   const backToDashboard = () => {
@@ -3216,6 +3364,24 @@ export default function Home() {
                 <div className="space-y-3 flex-1 min-w-0">
                   <h2 className="text-xl font-extrabold tracking-tight">{clienteAtivo.nome}</h2>
 
+                  {/* ── Barra de Meta Mensal no detalhe ── */}
+                  {clienteAtivo.meta_leads_mensal != null && clienteAtivo.meta_leads_mensal > 0 && (() => {
+                    const leadsDoMes = leadsDoMesPorCliente[clienteAtivo.id] ?? 0;
+                    // Também soma leads do período atual se já carregados
+                    const hoje = new Date();
+                    const mesAtual = hoje.toISOString().slice(0, 7); // "2025-03"
+                    const leadsEsteMes = allLeadsForDashboard.filter(l => {
+                      const d = l.data ?? l.created_at ?? "";
+                      return d.startsWith(mesAtual);
+                    }).length;
+                    const total = Math.max(leadsDoMes, leadsEsteMes);
+                    return (
+                      <div className="mt-1">
+                        <MetaGoalBar meta={clienteAtivo.meta_leads_mensal} leadsDoMes={total} />
+                      </div>
+                    );
+                  })()}
+
                   <div>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844] mb-1.5">Plataformas</p>
                     <div className="flex flex-wrap gap-1.5">
@@ -3361,6 +3527,8 @@ export default function Home() {
                 token={clienteAtivo.meta_access_token ?? null}
                 data={metaInsights[clienteAtivo.id] ?? null}
                 onFetch={fetchMetaInsights}
+                verbaMeta={clienteAtivo.verba_meta_ads ?? null}
+                verbaGls={clienteAtivo.verba_gls ?? null}
               />
             )}
 
