@@ -27,7 +27,6 @@ import {
   Wifi,
   WifiOff,
   Search,
-  Target,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
@@ -65,10 +64,6 @@ export interface Cliente {
   meta_ad_account_id?: string | null;
   meta_access_token?:  string | null;
   meta_status?:        string | null;
-  // ── Metas e Verbas ────────────────────────────────────────────────────────
-  meta_leads_mensal?:  number | null;
-  verba_meta_ads?:     number | null;
-  verba_gls?:          number | null;
 }
 
 export interface Lead {
@@ -469,17 +464,6 @@ export function ClienteModal({
 
   const [saving, setSaving] = useState(false);
 
-  // ── Metas e Verbas ──────────────────────────────────────────────────────
-  const [metaLeadsMensal, setMetaLeadsMensal] = useState<string>(
-    initial?.meta_leads_mensal != null ? String(initial.meta_leads_mensal) : ""
-  );
-  const [verbaMeta, setVerbaMeta] = useState<string>(
-    initial?.verba_meta_ads != null ? String(initial.verba_meta_ads) : ""
-  );
-  const [verbaGls, setVerbaGls] = useState<string>(
-    initial?.verba_gls != null ? String(initial.verba_gls) : ""
-  );
-
   // ── Meta Ads Integration ────────────────────────────────────────────────
   const [metaToken,         setMetaToken]         = useState(initial?.meta_access_token ?? "");
   const [metaAccountId,     setMetaAccountId]     = useState(initial?.meta_ad_account_id ?? "");
@@ -570,10 +554,6 @@ export function ClienteModal({
       meta_ad_account_id: metaAccountId.trim() || null,
       meta_access_token:  metaToken.trim() || null,
       meta_status: metaAccountId.trim() ? "vinculado" : "sem_link",
-      // ── Metas e Verbas ──────────────────────────────────────────────────────
-      meta_leads_mensal: metaLeadsMensal !== "" ? Number(metaLeadsMensal) : null,
-      verba_meta_ads:    verbaMeta !== "" ? Number(verbaMeta.replace(/\./g, "").replace(",", ".")) : null,
-      verba_gls:         verbaGls  !== "" ? Number(verbaGls.replace(/\./g, "").replace(",", "."))  : null,
     };
 
     setSaving(true);
@@ -1014,76 +994,6 @@ export function ClienteModal({
                 >
                   Desvincular
                 </button>
-              </div>
-            )}
-          </div>
-
-          {/* ── Metas e Controle de Investimento ───────────────────────────── */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-amber-500/20 flex items-center justify-center shrink-0">
-                <Target size={10} className="text-amber-400" />
-              </div>
-              <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Metas &amp; Controle de Investimento</label>
-            </div>
-
-            {/* Meta Mensal de Leads */}
-            <div className="space-y-1">
-              <label className="text-[10px] text-[#4a4844] font-medium">
-                Meta Mensal de Leads
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={metaLeadsMensal}
-                onChange={e => setMetaLeadsMensal(e.target.value)}
-                placeholder="Ex: 50"
-                className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/60 transition-colors"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {/* Verba Meta Ads */}
-              <div className="space-y-1">
-                <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1">
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="#1877F2"><path d="M24 12.073c0-6.627-5.372-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-                  Verba Meta Ads (R$)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={verbaMeta}
-                  onChange={e => setVerbaMeta(e.target.value)}
-                  placeholder="Ex: 3000.00"
-                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-blue-500/50 transition-colors"
-                />
-              </div>
-
-              {/* Verba GLS */}
-              <div className="space-y-1">
-                <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1">
-                  <svg width="9" height="9" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" fill="#34A853"/><path d="M34.5858 17.5858L21.4142 30.7574L14.8284 24.1716L12 27L21.4142 36.4142L37.4142 20.4142L34.5858 17.5858Z" fill="white"/></svg>
-                  Verba GLS (R$)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={verbaGls}
-                  onChange={e => setVerbaGls(e.target.value)}
-                  placeholder="Ex: 1500.00"
-                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-purple-500/50 transition-colors"
-                />
-              </div>
-            </div>
-
-            {(metaLeadsMensal || verbaMeta || verbaGls) && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/5 border border-amber-500/15">
-                <Activity size={11} className="text-amber-400 shrink-0" />
-                <p className="text-[10px] text-amber-300/70">
-                  Metas salvas permitem acompanhar progresso e saúde do investimento no dashboard.
-                </p>
               </div>
             )}
           </div>
