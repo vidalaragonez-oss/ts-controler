@@ -33,7 +33,7 @@ import { supabase } from "@/lib/supabase";
 
 // ─── Tipos locais ─────────────────────────────────────────────────────────────
 
-export type PlatformKey = "meta" | "google" | "gls";
+export type PlatformKey = "meta" | "google" | "gls" | "nextdoor" | "thumbtack";
 
 export interface Platform {
   key: PlatformKey;
@@ -64,6 +64,13 @@ export interface Cliente {
   meta_ad_account_id?: string | null;
   meta_access_token?:  string | null;
   meta_status?:        string | null;
+  // ── Metas & Orçamento ─────────────────────────────────────────────────────
+  meta_leads_mensal?: number | null;
+  verba_meta_ads?:    number | null;
+  verba_gls?:         number | null;
+  verba_outros?:      number | null;
+  // ── IDs de Integração extra ───────────────────────────────────────────────
+  gls_account_id?:    string | null;
 }
 
 export interface Lead {
@@ -123,6 +130,22 @@ export const PLATFORM_DEFS: {
       "Local Awareness",
     ],
   },
+  {
+    key: "nextdoor",
+    label: "Nextdoor Ads",
+    campaigns: [
+      "Nextdoor Local Deals",
+      "Nextdoor Awareness",
+    ],
+  },
+  {
+    key: "thumbtack",
+    label: "Thumbtack",
+    campaigns: [
+      "Thumbtack Leads",
+      "Thumbtack Pro Spotlight",
+    ],
+  },
 ];
 
 // Lookup: dado um nome de campanha, retorna a PlatformKey pai
@@ -155,18 +178,35 @@ export const PLATFORM_SVG: Record<PlatformKey, React.ReactNode> = {
       <path d="M34.5858 17.5858L21.4142 30.7574L14.8284 24.1716L12 27L21.4142 36.4142L37.4142 20.4142L34.5858 17.5858Z" fill="white" />
     </svg>
   ),
+  nextdoor: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="11" fill="#00B246" />
+      <path d="M7 12.5L10.5 16L17 9" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  ),
+  thumbtack: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="11" fill="#009FD9" />
+      <path d="M12 6V14M12 14L9 11M12 14L15 11" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="12" cy="17" r="1.2" fill="white"/>
+    </svg>
+  ),
 };
 
 const PLATFORM_CHIP_COLOR: Record<PlatformKey, string> = {
-  meta:   "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  google: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  gls:    "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  meta:      "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  google:    "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  gls:       "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  nextdoor:  "bg-green-500/15 text-green-400 border-green-500/30",
+  thumbtack: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
 };
 
 const LEAD_PLATFORM_OPTIONS = [
   "Meta Ads",
   "Google Ads",
   "Google Local Services",
+  "Nextdoor Ads",
+  "Thumbtack",
   "Elementor Form",
   "Outro",
 ];
@@ -212,7 +252,7 @@ function useGestoresFiltrados(enabled: boolean) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function buildInitialCamps(cliente?: Cliente): Record<PlatformKey, string[]> {
-  const result: Record<PlatformKey, string[]> = { meta: [], google: [], gls: [] };
+  const result: Record<PlatformKey, string[]> = { meta: [], google: [], gls: [], nextdoor: [], thumbtack: [] };
   if (!cliente) return result;
 
   // Fonte primária: tipo_campanha (array canônico, formato novo)
@@ -474,6 +514,15 @@ export function ClienteModal({
   const metaSearchRef = useRef<HTMLInputElement>(null);
   const metaDropdownRef = useRef<HTMLDivElement>(null);
 
+  // ── Metas, Orçamentos & IDs adicionais ─────────────────────────────────────
+  const [metaLeadsMensal, setMetaLeadsMensal] = useState<string>(
+    initial?.meta_leads_mensal != null ? String(initial.meta_leads_mensal) : ""
+  );
+  const [verbaMeta, setVerbaMeta]     = useState<string>(initial?.verba_meta_ads != null ? String(initial.verba_meta_ads) : "");
+  const [verbaGls, setVerbaGls]       = useState<string>(initial?.verba_gls      != null ? String(initial.verba_gls)      : "");
+  const [verbaOutros, setVerbaOutros] = useState<string>(initial?.verba_outros   != null ? String(initial.verba_outros)   : "");
+  const [glsAccountId, setGlsAccountId] = useState(initial?.gls_account_id ?? "");
+
   const handleFetchAccounts = async () => {
     setMetaLoading(true);
     setMetaAccounts([]);
@@ -554,6 +603,12 @@ export function ClienteModal({
       meta_ad_account_id: metaAccountId.trim() || null,
       meta_access_token:  metaToken.trim() || null,
       meta_status: metaAccountId.trim() ? "vinculado" : "sem_link",
+      // ── Metas & Orçamentos ─────────────────────────────────────────────────
+      meta_leads_mensal: metaLeadsMensal !== "" ? Number(metaLeadsMensal) : null,
+      verba_meta_ads:    verbaMeta   !== "" ? Number(verbaMeta)   : null,
+      verba_gls:         verbaGls    !== "" ? Number(verbaGls)    : null,
+      verba_outros:      verbaOutros !== "" ? Number(verbaOutros) : null,
+      gls_account_id:    glsAccountId.trim() || null,
     };
 
     setSaving(true);
@@ -781,6 +836,87 @@ export function ClienteModal({
             })}
           </div>
 
+
+          {/* ── Metas & Orçamentos ──────────────────────────────────────────────── */}
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-amber-500/20 flex items-center justify-center shrink-0">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#f5a623" strokeWidth="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg>
+              </div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">Metas &amp; Orçamento Mensal</label>
+            </div>
+            {/* Meta de Leads */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                Meta Mensal de Leads
+              </label>
+              <input type="number" min="0" value={metaLeadsMensal} onChange={e => setMetaLeadsMensal(e.target.value)}
+                placeholder="Ex: 50"
+                className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/60 transition-colors"/>
+            </div>
+            {/* Verbas — grade 3 colunas */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="#1877F2"><path d="M24 12.073c0-6.627-5.372-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                  Verba Meta (R$)
+                </label>
+                <input type="number" min="0" step="0.01" value={verbaMeta} onChange={e => setVerbaMeta(e.target.value)}
+                  placeholder="Ex: 3000"
+                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-blue-500/50 transition-colors"/>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1">
+                  <svg width="9" height="9" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" fill="#34A853"/><path d="M34.5858 17.5858L21.4142 30.7574L14.8284 24.1716L12 27L21.4142 36.4142L37.4142 20.4142L34.5858 17.5858Z" fill="white"/></svg>
+                  Verba GLS (R$)
+                </label>
+                <input type="number" min="0" step="0.01" value={verbaGls} onChange={e => setVerbaGls(e.target.value)}
+                  placeholder="Ex: 1500"
+                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-purple-500/50 transition-colors"/>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>
+                  Outras Verbas (R$)
+                </label>
+                <input type="number" min="0" step="0.01" value={verbaOutros} onChange={e => setVerbaOutros(e.target.value)}
+                  placeholder="Ex: 500"
+                  className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/50 transition-colors"/>
+              </div>
+            </div>
+            {/* Budget total preview */}
+            {(verbaMeta !== "" || verbaGls !== "" || verbaOutros !== "") && (() => {
+              const total = (verbaMeta !== "" ? Number(verbaMeta) : 0)
+                + (verbaGls !== "" ? Number(verbaGls) : 0)
+                + (verbaOutros !== "" ? Number(verbaOutros) : 0);
+              return (
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#111010]/60 border border-[#2e2c29]">
+                  <span className="text-[10px] text-[#7a7268] font-semibold uppercase tracking-widest">Orçamento Total Mensal</span>
+                  <span className="text-sm font-extrabold text-amber-400">
+                    {total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* ── IDs de Integração ────────────────────────────────────────────── */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-emerald-500/20 flex items-center justify-center shrink-0">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              </div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-[#7a7268]">ID de Conta — Google Local Services</label>
+            </div>
+            <input
+              type="text"
+              value={glsAccountId}
+              onChange={e => setGlsAccountId(e.target.value)}
+              placeholder="ID da conta GLS (opcional)"
+              className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-xs text-[#e8e2d8] placeholder:text-[#3a3835] outline-none focus:border-emerald-500/50 transition-colors font-mono"
+            />
+          </div>
 
           {/* ── Integração Meta Ads ─────────────────────────────────────────── */}
           <div className="space-y-3">
