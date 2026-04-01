@@ -1734,7 +1734,28 @@ function ClientRow({ client, onSelect, onEdit, onDeactivate, onDelete, onToggleA
           </button>
           <div className="min-w-0">
             <p className="font-semibold text-[#e8e2d8] text-sm truncate max-w-[160px]">{client.nome}</p>
-            <MetaSummary data={metaData} />
+            {(() => {
+              const totalOrc = (client.verba_meta_ads ?? 0) + (client.verba_gls ?? 0) + ((client as Cliente & { verba_outros?: number | null }).verba_outros ?? 0);
+              const temOrc = totalOrc > 0;
+              const temMeta = (client.meta_leads_mensal ?? 0) > 0;
+              if (!temOrc && !temMeta) return null;
+              return (
+                <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                  {temOrc && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-amber-500/8 border border-amber-500/20 text-amber-400">
+                      <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                      {totalOrc.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                    </span>
+                  )}
+                  {temMeta && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-blue-500/8 border border-blue-500/25 text-blue-400">
+                      <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                      {client.meta_leads_mensal} leads/mês
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       </td>
@@ -2251,6 +2272,7 @@ function renderRadar({
   onCustomApply,
   verbaMeta,
   verbaGls,
+  moedaCliente,
 }: {
   data: MetaInsightData;
   preset: RadarPreset;
@@ -2263,10 +2285,12 @@ function renderRadar({
   onCustomApply: () => void;
   verbaMeta?: number | null;
   verbaGls?: number | null;
+  moedaCliente?: 'BRL' | 'USD' | null;
 }) {
   const fmt = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtInt = (v: number) => v.toLocaleString("pt-BR");
-  const symbol = !data || (data.currency ?? "BRL") === "BRL" ? "R$" : "US$";
+  // moedaCliente has priority over API-reported currency (fixes sync bug)
+  const symbol = (moedaCliente ?? (data?.currency ?? "BRL")) === "USD" ? "US$" : "R$";
 
   const hasForm  = data && !data.loading && !data.error && data.form_leads > 0;
   const hasMsg   = data && !data.loading && !data.error && data.msg_leads  > 0;
@@ -2406,12 +2430,12 @@ function renderRadar({
                     </div>
                     <div className="w-px h-6 bg-[#2e2c29]" />
                     <div>
-                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">Verba Planejada</p>
+                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">Verba Configurada</p>
                       <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(verbaMeta)}</p>
                     </div>
                     <div className="w-px h-6 bg-[#2e2c29]" />
                     <div>
-                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">{restante >= 0 ? "Saldo" : "Excedente"}</p>
+                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">{restante >= 0 ? "Saldo Disponível" : "Excedente"}</p>
                       <p className={`text-xs font-extrabold ${restante >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {restante >= 0 ? "" : "-"}{symbol} {fmt(Math.abs(restante))}
                       </p>
@@ -2535,7 +2559,7 @@ function renderRadar({
 
 // ─── RadarWrapper: componente com estado próprio ──────────────────────────────
 function RadarWrapper({
-  clienteId, accountId, token, data, onFetch, verbaMeta, verbaGls,
+  clienteId, accountId, token, data, onFetch, verbaMeta, verbaGls, moedaCliente,
 }: {
   clienteId: string;
   accountId: string;
@@ -2544,6 +2568,7 @@ function RadarWrapper({
   onFetch: (clienteId: string, accountId: string, token: string | null, since: string, until: string) => void;
   verbaMeta?: number | null;
   verbaGls?: number | null;
+  moedaCliente?: 'BRL' | 'USD' | null;
 }) {
   const [preset, setPreset]         = useState<RadarPreset>("7d");
   const [customFrom, setCustomFrom] = useState("");
@@ -2580,6 +2605,7 @@ function RadarWrapper({
     onCustomApply: handleCustomApply,
     verbaMeta,
     verbaGls,
+    moedaCliente,
   });
 }
 
@@ -2650,6 +2676,7 @@ function normalizeCliente(raw: Record<string, unknown>): Cliente {
     verba_gls:          raw.verba_gls          != null ? Number(raw.verba_gls)          : null,
     verba_outros:       raw.verba_outros       != null ? Number(raw.verba_outros)       : null,
     gls_account_id:     (raw.gls_account_id    as string) ?? null,
+    moeda:              (raw.moeda as 'BRL' | 'USD' | null) ?? null,
   } as Cliente;
 }
 
@@ -2845,7 +2872,7 @@ export default function Home() {
     try {
       const { data, error } = await supabase
         .from("clientes")
-        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls, verba_outros, gls_account_id")
+        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls, verba_outros, gls_account_id, moeda")
         .eq("operacao_id",operacaoId)
         .order("ordem",{ascending:true,nullsFirst:false})
         .order("created_at",{ascending:true});
@@ -3722,7 +3749,7 @@ export default function Home() {
                           Orçamento Mensal Planejado
                         </span>
                         <span className="text-sm font-extrabold text-amber-400">
-                          {total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          {sym} {total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                         {vm > 0 && (
                           <span className="text-[9px] text-[#7a7268] font-semibold">
@@ -3901,6 +3928,7 @@ export default function Home() {
                 onFetch={fetchMetaInsights}
                 verbaMeta={clienteAtivo.verba_meta_ads ?? null}
                 verbaGls={clienteAtivo.verba_gls ?? null}
+                moedaCliente={(clienteAtivo as Cliente & { moeda?: 'BRL' | 'USD' | null }).moeda ?? null}
               />
             )}
 
