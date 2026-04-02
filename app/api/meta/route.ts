@@ -79,33 +79,46 @@ const OBJECTIVE_LABEL: Record<string, string> = {
 
 // ─── Extrai métricas de results de um array de actions ────────────────────────
 
-const LEAD_TYPES = new Set(["lead", "onsite_conversion.messaging_conversation_started_7d", "onsite_conversion.lead_grouped"]);
-const SKIP_TYPES = new Set(["leadgen_grouped"]);
+// Mapa: objective → action_type estrito que define "resultado"
+const OBJECTIVE_ACTION_MAP: Record<string, string[]> = {
+  OUTCOME_LEADS:      ["lead", "onsite_conversion.lead_grouped"],
+  OUTCOME_ENGAGEMENT: ["post_engagement"],
+  MESSAGES:           ["onsite_conversion.messaging_conversation_started_7d"],
+  OUTCOME_TRAFFIC:    ["link_click"],
+};
 
 function extractInsights(
   actions: ActionEntry[],
   cpaList: ActionEntry[],
   spend: number,
+  objective: string = "UNKNOWN",
 ): AdInsights {
+  const targetTypes = OBJECTIVE_ACTION_MAP[objective];
+
   let results = 0;
-  for (const a of actions) {
-    if (SKIP_TYPES.has(a.action_type)) continue;
-    if (LEAD_TYPES.has(a.action_type)) results += parseInt(a.value ?? "0", 10);
-  }
-  // Fallback: se não há leads específicos, soma todas as ações relevantes
-  if (results === 0 && actions.length > 0) {
+  if (targetTypes) {
+    // Contagem estrita: apenas as action_types do objetivo da campanha
+    const targetSet = new Set(targetTypes);
     for (const a of actions) {
-      if (!SKIP_TYPES.has(a.action_type)) results += parseInt(a.value ?? "0", 10);
+      if (targetSet.has(a.action_type)) results += parseInt(a.value ?? "0", 10);
     }
   }
+  // Sem fallback genérico — se o objective não é mapeado, results fica 0
+
   let cpr = 0;
-  for (const c of cpaList) {
-    if (!SKIP_TYPES.has(c.action_type) && LEAD_TYPES.has(c.action_type)) {
-      const v = parseFloat(c.value ?? "0");
-      if (v > 0 && (cpr === 0 || v < cpr)) cpr = v;
+  if (targetTypes) {
+    const targetSet = new Set(targetTypes);
+    // Tenta obter CPR do cost_per_action_type para a mesma ação do resultado
+    for (const c of cpaList) {
+      if (targetSet.has(c.action_type)) {
+        const v = parseFloat(c.value ?? "0");
+        if (v > 0 && (cpr === 0 || v < cpr)) cpr = v;
+      }
     }
   }
+  // Se não veio no cost_per_action_type, calcula spend / results
   if (cpr === 0 && results > 0) cpr = spend / results;
+
   return { spend, results, cpr };
 }
 
@@ -160,7 +173,12 @@ export async function GET(req: NextRequest) {
         form_name: string;
       }[] = [];
 
-      // 2. Para cada formulário, busca os leads
+      // 2. Para cada formulário, busca os leads (apenas últimos 15 dias)
+      const fifteenDaysAgo = Math.floor((Date.now() - 15 * 24 * 60 * 60 * 1000) / 1000);
+      const leadsFiltering = JSON.stringify([
+        { field: "time_created", operator: "GREATER_THAN", value: fifteenDaysAgo },
+      ]);
+
       for (const form of (formsData.data ?? []) as { id: string; name: string }[]) {
         try {
           let cursor: string | null = null;
@@ -170,10 +188,29 @@ export async function GET(req: NextRequest) {
               access_token: token,
               fields: "id,field_data,created_time",
               limit: "100",
+              filtering: leadsFiltering,
             };
             if (cursor) params.after = cursor;
 
-            const leadsData = await metaFetch(`/${form.id}/leads`, params);
+            let leadsData: Record<string, unknown>;
+            try {
+              leadsData = await metaFetch(`/${form.id}/leads`, params);
+            } catch (fetchErr: unknown) {
+              const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+              const isPermissionError =
+                errMsg.toLowerCase().includes("permission") ||
+                errMsg.toLowerCase().includes("leads_retrieval") ||
+                errMsg.toLowerCase().includes("oauth");
+              if (isPermissionError) {
+                console.error(
+                  `[Meta Leads] Erro de permissão ao buscar leads do formulário ${form.id} (${form.name}). ` +
+                  `Verifique se o token possui a permissão 'leads_retrieval'. Detalhes: ${errMsg}`
+                );
+              } else {
+                console.error(`[Meta Leads] Erro ao buscar leads do formulário ${form.id}: ${errMsg}`);
+              }
+              break; // interrompe paginação deste formulário, vai pro próximo
+            }
             const rows = (leadsData.data ?? []) as {
               id: string;
               created_time: string;
@@ -275,7 +312,7 @@ export async function GET(req: NextRequest) {
         const campSpend   = parseFloat((campInsightRow.spend as string) ?? "0") || 0;
         const campActions = (campInsightRow.actions as ActionEntry[]) ?? [];
         const campCpa     = (campInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
-        const campInsights = extractInsights(campActions, campCpa, campSpend);
+        const campInsights = extractInsights(campActions, campCpa, campSpend, objective);
 
         // 2. Busca adsets desta campanha com insights
         let adsetNodes: AdSetNode[] = [];
@@ -295,7 +332,7 @@ export async function GET(req: NextRequest) {
             const adsetSpend   = parseFloat((adsetInsightRow.spend as string) ?? "0") || 0;
             const adsetActions = (adsetInsightRow.actions as ActionEntry[]) ?? [];
             const adsetCpa     = (adsetInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
-            const adsetInsights = extractInsights(adsetActions, adsetCpa, adsetSpend);
+            const adsetInsights = extractInsights(adsetActions, adsetCpa, adsetSpend, objective);
 
             // 3. Busca ads do adset com insights
             let adNodes: AdNode[] = [];
@@ -316,7 +353,7 @@ export async function GET(req: NextRequest) {
                   id:       ad.id as string,
                   name:     (ad.name as string) ?? "Anúncio",
                   status:   (ad.status as string) ?? "UNKNOWN",
-                  insights: extractInsights(adActions, adCpa, adSpend),
+                  insights: extractInsights(adActions, adCpa, adSpend, objective),
                 };
               });
             } catch {
