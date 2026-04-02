@@ -2338,9 +2338,17 @@ function RadarTree({
     const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); setter(n);
   };
 
-  const totalSpend   = treeData.groups.reduce((s, g) => s + g.total_spend, 0);
-  const totalResults = treeData.groups.reduce((s, g) => s + g.total_results, 0);
-  const totalCpr     = totalResults > 0 ? totalSpend / totalResults : 0;
+  const totalSpend = treeData.groups.reduce((s, g) => s + g.total_spend, 0);
+
+  // Resultados NÃO devem ser somados entre objectives diferentes
+  // (leads + engajamentos são unidades incomparáveis).
+  // O cabeçalho mostra apenas o gasto total e um resumo por objetivo.
+  // O CPR global só faz sentido se há um único grupo.
+  const singleGroup  = treeData.groups.length === 1 ? treeData.groups[0] : null;
+  const globalResults = singleGroup?.total_results ?? null;
+  const globalCpr     = singleGroup && singleGroup.total_results > 0
+    ? singleGroup.total_spend / singleGroup.total_results
+    : null;
 
   return (
     <div className="space-y-3">
@@ -2351,12 +2359,19 @@ function RadarTree({
           <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(totalSpend)}</p>
         </div>
         <div>
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Resultados</p>
-          <p className="text-sm font-extrabold text-[#e8e2d8]">{fmtInt(totalResults)}</p>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">
+            {singleGroup ? `Resultados · ${singleGroup.objective_label}` : "Resultados"}
+          </p>
+          {globalResults !== null
+            ? <p className="text-sm font-extrabold text-[#e8e2d8]">{fmtInt(globalResults)}</p>
+            : <p className="text-[10px] text-[#4a4844] italic mt-1">Ver por objetivo ↓</p>
+          }
         </div>
         <div>
           <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Custo/Resultado</p>
-          <p className="text-sm font-extrabold text-[#e8e2d8]">{totalResults > 0 ? `${symbol} ${fmt(totalCpr)}` : "—"}</p>
+          <p className="text-sm font-extrabold text-[#e8e2d8]">
+            {globalCpr !== null ? `${symbol} ${fmt(globalCpr)}` : "—"}
+          </p>
         </div>
       </div>
 
