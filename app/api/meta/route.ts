@@ -20,36 +20,372 @@ async function metaFetch(path: string, params: Record<string, string>) {
   return json;
 }
 
-// ─── GET /api/meta?action=accounts ───────────────────────────────────────────
-// ─── GET /api/meta?action=insights&account_id=act_xxx&since=&until= ──────────
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
+type ActionEntry = { action_type: string; value: string };
+
+interface AdInsights {
+  spend: number;
+  results: number;
+  cpr: number;
+}
+
+interface AdNode {
+  id: string;
+  name: string;
+  status: string;
+  insights: AdInsights;
+}
+
+interface AdSetNode {
+  id: string;
+  name: string;
+  status: string;
+  insights: AdInsights;
+  ads: AdNode[];
+}
+
+interface CampaignNode {
+  id: string;
+  name: string;
+  objective: string;
+  objective_label: string;
+  status: string;
+  insights: AdInsights;
+  adsets: AdSetNode[];
+}
+
+interface ObjectiveGroup {
+  objective: string;
+  objective_label: string;
+  total_spend: number;
+  total_results: number;
+  cpr: number;
+  campaigns: CampaignNode[];
+}
+
+// ─── Mapa de objectives ────────────────────────────────────────────────────────
+
+const OBJECTIVE_LABEL: Record<string, string> = {
+  OUTCOME_LEADS:         "Leads",
+  OUTCOME_ENGAGEMENT:    "Engajamento",
+  OUTCOME_AWARENESS:     "Reconhecimento",
+  OUTCOME_TRAFFIC:       "Tráfego",
+  OUTCOME_SALES:         "Vendas",
+  OUTCOME_APP_PROMOTION: "App",
+  MESSAGES:              "Mensagens",
+  UNKNOWN:               "—",
+};
+
+// ─── Extrai métricas de results de um array de actions ────────────────────────
+
+const LEAD_TYPES = new Set(["lead", "onsite_conversion.messaging_conversation_started_7d", "onsite_conversion.lead_grouped"]);
+const SKIP_TYPES = new Set(["leadgen_grouped"]);
+
+function extractInsights(
+  actions: ActionEntry[],
+  cpaList: ActionEntry[],
+  spend: number,
+): AdInsights {
+  let results = 0;
+  for (const a of actions) {
+    if (SKIP_TYPES.has(a.action_type)) continue;
+    if (LEAD_TYPES.has(a.action_type)) results += parseInt(a.value ?? "0", 10);
+  }
+  // Fallback: se não há leads específicos, soma todas as ações relevantes
+  if (results === 0 && actions.length > 0) {
+    for (const a of actions) {
+      if (!SKIP_TYPES.has(a.action_type)) results += parseInt(a.value ?? "0", 10);
+    }
+  }
+  let cpr = 0;
+  for (const c of cpaList) {
+    if (!SKIP_TYPES.has(c.action_type) && LEAD_TYPES.has(c.action_type)) {
+      const v = parseFloat(c.value ?? "0");
+      if (v > 0 && (cpr === 0 || v < cpr)) cpr = v;
+    }
+  }
+  if (cpr === 0 && results > 0) cpr = spend / results;
+  return { spend, results, cpr };
+}
+
+// ─── GET /api/meta?action=accounts ────────────────────────────────────────────
+// ─── GET /api/meta?action=insights&account_id=act_xxx&since=&until= ───────────
+// ─── GET /api/meta?action=tree&account_id=act_xxx&since=&until= ───────────────
+// ─── GET /api/meta?action=leads&account_id=act_xxx ────────────────────────────
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-  const action     = searchParams.get("action");
+  const action      = searchParams.get("action");
   const clientToken = searchParams.get("token");
 
   try {
     const token = resolveToken(clientToken);
 
-    // ── Listar contas disponíveis ────────────────────────────────────────────
+    // ── Listar contas disponíveis ──────────────────────────────────────────────
     if (action === "accounts") {
       const data = await metaFetch("/me/adaccounts", {
         access_token: token,
         fields: "id,name,account_status,currency",
         limit: "100",
       });
-
       const accounts = (data.data ?? []).map((a: Record<string, unknown>) => ({
-        id:      a.id,
-        name:    a.name,
-        status:  a.account_status,
+        id:       a.id,
+        name:     a.name,
+        status:   a.account_status,
         currency: a.currency,
       }));
-
       return NextResponse.json({ accounts });
     }
 
-    // ── Buscar insights de uma conta ─────────────────────────────────────────
+    // ── Buscar leads dos formulários (para auto-sync) ──────────────────────────
+    if (action === "leads") {
+      const accountId = searchParams.get("account_id");
+      if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
+
+      // 1. Busca formulários da conta
+      const formsData = await metaFetch(`/${accountId}/leadgen_forms`, {
+        access_token: token,
+        fields: "id,name,status",
+        limit: "100",
+      });
+
+      const leads: {
+        meta_lead_id: string;
+        nome: string;
+        email: string;
+        telefone: string;
+        created_time: string;
+        form_id: string;
+        form_name: string;
+      }[] = [];
+
+      // 2. Para cada formulário, busca os leads
+      for (const form of (formsData.data ?? []) as { id: string; name: string }[]) {
+        try {
+          let cursor: string | null = null;
+          let page = 0;
+          while (page < 5) { // máximo 5 páginas por formulário (500 leads)
+            const params: Record<string, string> = {
+              access_token: token,
+              fields: "id,field_data,created_time",
+              limit: "100",
+            };
+            if (cursor) params.after = cursor;
+
+            const leadsData = await metaFetch(`/${form.id}/leads`, params);
+            const rows = (leadsData.data ?? []) as {
+              id: string;
+              created_time: string;
+              field_data: { name: string; values: string[] }[];
+            }[];
+
+            for (const row of rows) {
+              // Mapeamento flexível dos field_data
+              let nome = "";
+              let email = "";
+              let telefone = "";
+
+              for (const field of (row.field_data ?? [])) {
+                const key = (field.name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const val = field.values?.[0] ?? "";
+                if (!val) continue;
+
+                if (["fullname", "nome", "name", "firstname"].includes(key)) {
+                  nome = nome ? `${nome} ${val}` : val;
+                } else if (key === "lastname" && nome) {
+                  nome = `${nome} ${val}`;
+                } else if (["email", "emailaddress"].includes(key)) {
+                  email = val;
+                } else if (["phonenumber", "phone", "telefone", "celular", "whatsapp"].includes(key)) {
+                  telefone = val;
+                }
+              }
+
+              // Fallback por padrão no valor se campo não mapeado
+              if (!email) {
+                const emailField = row.field_data?.find(f => (f.values?.[0] ?? "").includes("@"));
+                if (emailField) email = emailField.values?.[0] ?? "";
+              }
+              if (!telefone) {
+                const phoneField = row.field_data?.find(f => /^[\+\(\)0-9\-\.\s]{9,20}$/.test(f.values?.[0] ?? ""));
+                if (phoneField) telefone = phoneField.values?.[0] ?? "";
+              }
+
+              leads.push({
+                meta_lead_id: row.id,
+                nome:         nome || "Lead Meta",
+                email,
+                telefone,
+                created_time: row.created_time,
+                form_id:      form.id,
+                form_name:    form.name,
+              });
+            }
+
+            cursor = leadsData.paging?.cursors?.after ?? null;
+            if (!cursor || !leadsData.paging?.next) break;
+            page++;
+          }
+        } catch {
+          // Formulário sem permissão ou sem leads — segue
+        }
+      }
+
+      return NextResponse.json({ leads });
+    }
+
+    // ── Buscar árvore completa Campaigns → AdSets → Ads com insights ──────────
+    if (action === "tree") {
+      const accountId = searchParams.get("account_id");
+      const since     = searchParams.get("since");
+      const until     = searchParams.get("until");
+
+      if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
+
+      const accountData = await metaFetch(`/${accountId}`, {
+        access_token: token,
+        fields: "account_status,name,currency",
+      });
+
+      // Parâmetros de período
+      const timeParam: Record<string, string> = since && until
+        ? { time_range: JSON.stringify({ since, until }) }
+        : { date_preset: "last_7d" };
+
+      const insightFields = "spend,actions,cost_per_action_type";
+
+      // 1. Busca campanhas com insights
+      const campaignData = await metaFetch(`/${accountId}/campaigns`, {
+        access_token: token,
+        fields: `id,name,objective,status,insights{${insightFields}}`,
+        limit: "100",
+        ...timeParam,
+      });
+
+      const campaignNodes: CampaignNode[] = [];
+
+      for (const camp of (campaignData.data ?? []) as Record<string, unknown>[]) {
+        const campId   = camp.id as string;
+        const campName = (camp.name as string) ?? "Campanha";
+        const objective      = (camp.objective as string) ?? "UNKNOWN";
+        const objectiveLabel = OBJECTIVE_LABEL[objective] ?? objective;
+
+        const campInsightRow = ((camp.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
+        const campSpend   = parseFloat((campInsightRow.spend as string) ?? "0") || 0;
+        const campActions = (campInsightRow.actions as ActionEntry[]) ?? [];
+        const campCpa     = (campInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
+        const campInsights = extractInsights(campActions, campCpa, campSpend);
+
+        // 2. Busca adsets desta campanha com insights
+        let adsetNodes: AdSetNode[] = [];
+        try {
+          const adsetData = await metaFetch(`/${campId}/adsets`, {
+            access_token: token,
+            fields: `id,name,status,insights{${insightFields}}`,
+            limit: "100",
+            ...timeParam,
+          });
+
+          for (const adset of (adsetData.data ?? []) as Record<string, unknown>[]) {
+            const adsetId   = adset.id as string;
+            const adsetName = (adset.name as string) ?? "Conjunto";
+
+            const adsetInsightRow = ((adset.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
+            const adsetSpend   = parseFloat((adsetInsightRow.spend as string) ?? "0") || 0;
+            const adsetActions = (adsetInsightRow.actions as ActionEntry[]) ?? [];
+            const adsetCpa     = (adsetInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
+            const adsetInsights = extractInsights(adsetActions, adsetCpa, adsetSpend);
+
+            // 3. Busca ads do adset com insights
+            let adNodes: AdNode[] = [];
+            try {
+              const adsData = await metaFetch(`/${adsetId}/ads`, {
+                access_token: token,
+                fields: `id,name,status,insights{${insightFields}}`,
+                limit: "100",
+                ...timeParam,
+              });
+
+              adNodes = ((adsData.data ?? []) as Record<string, unknown>[]).map(ad => {
+                const adInsightRow = ((ad.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
+                const adSpend   = parseFloat((adInsightRow.spend as string) ?? "0") || 0;
+                const adActions = (adInsightRow.actions as ActionEntry[]) ?? [];
+                const adCpa     = (adInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
+                return {
+                  id:       ad.id as string,
+                  name:     (ad.name as string) ?? "Anúncio",
+                  status:   (ad.status as string) ?? "UNKNOWN",
+                  insights: extractInsights(adActions, adCpa, adSpend),
+                };
+              });
+            } catch {
+              // Sem permissão para ads — segue sem eles
+            }
+
+            adsetNodes.push({
+              id:       adsetId,
+              name:     adsetName,
+              status:   (adset.status as string) ?? "UNKNOWN",
+              insights: adsetInsights,
+              ads:      adNodes,
+            });
+          }
+        } catch {
+          // Sem permissão para adsets — segue sem eles
+        }
+
+        campaignNodes.push({
+          id:               campId,
+          name:             campName,
+          objective,
+          objective_label:  objectiveLabel,
+          status:           (camp.status as string) ?? "UNKNOWN",
+          insights:         campInsights,
+          adsets:           adsetNodes,
+        });
+      }
+
+      // Agrupa por objetivo
+      const groupMap = new Map<string, ObjectiveGroup>();
+      for (const camp of campaignNodes) {
+        const key = camp.objective;
+        if (!groupMap.has(key)) {
+          groupMap.set(key, {
+            objective:       camp.objective,
+            objective_label: camp.objective_label,
+            total_spend:     0,
+            total_results:   0,
+            cpr:             0,
+            campaigns:       [],
+          });
+        }
+        const g = groupMap.get(key)!;
+        g.total_spend   += camp.insights.spend;
+        g.total_results += camp.insights.results;
+        g.campaigns.push(camp);
+      }
+
+      // Calcula CPR por grupo
+      const groups: ObjectiveGroup[] = [];
+      for (const g of groupMap.values()) {
+        g.cpr = g.total_results > 0 ? g.total_spend / g.total_results : 0;
+        // Ordena campanhas por gasto desc
+        g.campaigns.sort((a, b) => b.insights.spend - a.insights.spend);
+        groups.push(g);
+      }
+      // Ordena grupos por gasto desc
+      groups.sort((a, b) => b.total_spend - a.total_spend);
+
+      return NextResponse.json({
+        account_status: accountData.account_status as number,
+        account_name:   accountData.name as string,
+        currency:       (accountData.currency as string) ?? "BRL",
+        groups,
+      });
+    }
+
+    // ── Buscar insights de uma conta (legado — mantido para badges externos) ───
     if (action === "insights") {
       const accountId = searchParams.get("account_id");
       const since     = searchParams.get("since");
@@ -57,14 +393,12 @@ export async function GET(req: NextRequest) {
 
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
-      // 1. Status + moeda da conta
       const accountData = await metaFetch(`/${accountId}`, {
         access_token: token,
         fields: "account_status,name,currency",
       });
 
-      // 2. Objetivos reais das campanhas (campo `objective` — fonte da verdade)
-      //    Busca todas as campanhas da conta para montar um mapa campaign_id → objective
+      // Mapa de objectives para campanhas
       const objectiveMap = new Map<string, string>();
       try {
         let url: string | null = `/${accountId}/campaigns`;
@@ -77,18 +411,13 @@ export async function GET(req: NextRequest) {
           for (const c of (campData.data ?? []) as { id: string; objective: string }[]) {
             objectiveMap.set(c.id, c.objective ?? "UNKNOWN");
           }
-          // Paginação (cursor-based)
           url = campData.paging?.cursors?.after
             ? `/${accountId}/campaigns?after=${campData.paging.cursors.after}`
             : null;
-          // Segurança: sai após 5 páginas (2500 campanhas)
           if (campData.paging?.next === undefined) break;
         }
-      } catch {
-        // Sem permissão para ler campanhas — segue sem objectives
-      }
+      } catch { /* sem permissão */ }
 
-      // 3. Insights por campanha com campaign_id para cruzar com o mapa de objetivos
       const insightParams: Record<string, string> = {
         access_token: token,
         fields: "campaign_id,campaign_name,spend,actions,cost_per_action_type",
@@ -102,8 +431,7 @@ export async function GET(req: NextRequest) {
         insightParams.date_preset = "maximum";
       }
 
-      // Mapa de objectives para labels amigáveis exibidos na UI
-      const OBJECTIVE_LABEL: Record<string, string> = {
+      const OBJECTIVE_LABEL_MAP: Record<string, string> = {
         OUTCOME_LEADS:            "Leads",
         OUTCOME_ENGAGEMENT:       "Engajamento",
         OUTCOME_AWARENESS:        "Reconhecimento",
@@ -114,7 +442,6 @@ export async function GET(req: NextRequest) {
         UNKNOWN:                  "—",
       };
 
-      // Tipos de lead que NÃO devem ser somados (aliases duplicados)
       const FORM_LEAD_TYPE  = "lead";
       const MSG_LEAD_TYPES  = new Set([
         "onsite_conversion.messaging_conversation_started_7d",
@@ -124,8 +451,8 @@ export async function GET(req: NextRequest) {
 
       type CampaignRow = {
         campaign_name: string;
-        objective: string;       // valor bruto ex: OUTCOME_LEADS
-        objective_label: string; // label amigável ex: "Leads"
+        objective: string;
+        objective_label: string;
         spend: string;
         form_leads: number;
         msg_leads: number;
@@ -148,24 +475,18 @@ export async function GET(req: NextRequest) {
           totalSpend += campSpend;
 
           const objective      = objectiveMap.get(campId) ?? "UNKNOWN";
-          const objectiveLabel = OBJECTIVE_LABEL[objective] ?? objective;
+          const objectiveLabel = OBJECTIVE_LABEL_MAP[objective] ?? objective;
 
-          const actions: { action_type: string; value: string }[] =
-            (row.actions as { action_type: string; value: string }[]) ?? [];
-          const cpaList: { action_type: string; value: string }[] =
-            (row.cost_per_action_type as { action_type: string; value: string }[]) ?? [];
+          const actions: ActionEntry[] = (row.actions as ActionEntry[]) ?? [];
+          const cpaList: ActionEntry[] = (row.cost_per_action_type as ActionEntry[]) ?? [];
 
           let campFormLeads = 0;
           let campMsgLeads  = 0;
 
           for (const act of actions) {
             if (SKIP_LEAD_TYPES.has(act.action_type)) continue;
-            if (act.action_type === FORM_LEAD_TYPE) {
-              campFormLeads += parseInt(act.value ?? "0", 10);
-            }
-            if (MSG_LEAD_TYPES.has(act.action_type)) {
-              campMsgLeads += parseInt(act.value ?? "0", 10);
-            }
+            if (act.action_type === FORM_LEAD_TYPE)    campFormLeads += parseInt(act.value ?? "0", 10);
+            if (MSG_LEAD_TYPES.has(act.action_type))   campMsgLeads  += parseInt(act.value ?? "0", 10);
           }
 
           totalFormLeads += campFormLeads;
@@ -176,28 +497,21 @@ export async function GET(req: NextRequest) {
           for (const cpa of cpaList) {
             if (SKIP_LEAD_TYPES.has(cpa.action_type)) continue;
             if (cpa.action_type === FORM_LEAD_TYPE) {
-              const v = parseFloat(cpa.value ?? "0");
-              if (v > 0) campFormCpl = v;
+              const v = parseFloat(cpa.value ?? "0"); if (v > 0) campFormCpl = v;
             }
             if (MSG_LEAD_TYPES.has(cpa.action_type)) {
-              const v = parseFloat(cpa.value ?? "0");
-              if (v > 0 && (campMsgCpl === 0 || v < campMsgCpl)) campMsgCpl = v;
+              const v = parseFloat(cpa.value ?? "0"); if (v > 0 && (campMsgCpl === 0 || v < campMsgCpl)) campMsgCpl = v;
             }
           }
 
-          // Fallback proporcional
           const campTotal = campFormLeads + campMsgLeads;
           if (campTotal > 0) {
-            if (campFormCpl === 0 && campFormLeads > 0) {
-              campFormCpl = (campSpend * (campFormLeads / campTotal)) / campFormLeads;
-            }
-            if (campMsgCpl === 0 && campMsgLeads > 0) {
-              campMsgCpl = (campSpend * (campMsgLeads / campTotal)) / campMsgLeads;
-            }
+            if (campFormCpl === 0 && campFormLeads > 0) campFormCpl = (campSpend * (campFormLeads / campTotal)) / campFormLeads;
+            if (campMsgCpl === 0 && campMsgLeads  > 0) campMsgCpl  = (campSpend * (campMsgLeads  / campTotal)) / campMsgLeads;
           }
 
           campaigns.push({
-            campaign_name:  (row.campaign_name as string) ?? "Campanha",
+            campaign_name:   (row.campaign_name as string) ?? "Campanha",
             objective,
             objective_label: objectiveLabel,
             spend:           campSpend.toFixed(2),
@@ -207,19 +521,14 @@ export async function GET(req: NextRequest) {
             msg_cpl:         campMsgCpl,
           });
         }
-      } catch {
-        // Sem dados de insight
-      }
+      } catch { /* sem dados */ }
 
       const totalLeads = totalFormLeads + totalMsgLeads;
       const cpl        = totalLeads > 0 ? totalSpend / totalLeads : 0;
-
-      const formSpend = totalLeads > 0 && totalFormLeads > 0
-        ? totalSpend * (totalFormLeads / totalLeads) : 0;
-      const msgSpend = totalLeads > 0 && totalMsgLeads > 0
-        ? totalSpend * (totalMsgLeads / totalLeads) : 0;
-      const formCpl = totalFormLeads > 0 ? formSpend / totalFormLeads : 0;
-      const msgCpl  = totalMsgLeads  > 0 ? msgSpend  / totalMsgLeads  : 0;
+      const formSpend  = totalLeads > 0 && totalFormLeads > 0 ? totalSpend * (totalFormLeads / totalLeads) : 0;
+      const msgSpend   = totalLeads > 0 && totalMsgLeads  > 0 ? totalSpend * (totalMsgLeads  / totalLeads) : 0;
+      const formCpl    = totalFormLeads > 0 ? formSpend / totalFormLeads : 0;
+      const msgCpl     = totalMsgLeads  > 0 ? msgSpend  / totalMsgLeads  : 0;
 
       return NextResponse.json({
         account_status: accountData.account_status as number,
@@ -230,12 +539,12 @@ export async function GET(req: NextRequest) {
         messages:       totalMsgLeads,
         total_leads:    totalLeads,
         cpl,
-        form_leads: totalFormLeads,
-        form_spend: formSpend,
-        form_cpl:   formCpl,
-        msg_leads:  totalMsgLeads,
-        msg_spend:  msgSpend,
-        msg_cpl:    msgCpl,
+        form_leads:     totalFormLeads,
+        form_spend:     formSpend,
+        form_cpl:       formCpl,
+        msg_leads:      totalMsgLeads,
+        msg_spend:      msgSpend,
+        msg_cpl:        msgCpl,
         campaigns,
       });
     }
