@@ -520,9 +520,11 @@ export function ClienteModal({
   const [metaLeadsMensal, setMetaLeadsMensal] = useState<string>(
     initial?.meta_leads_mensal != null ? String(initial.meta_leads_mensal) : ""
   );
-  const [verbaMeta, setVerbaMeta]     = useState<string>(initial?.verba_meta_ads != null ? String(initial.verba_meta_ads) : "");
-  const [verbaGls, setVerbaGls]       = useState<string>(initial?.verba_gls      != null ? String(initial.verba_gls)      : "");
-  const [verbaOutros, setVerbaOutros] = useState<string>(initial?.verba_outros   != null ? String(initial.verba_outros)   : "");
+  const [verbaMeta, setVerbaMeta]         = useState<string>(initial?.verba_meta_ads != null ? String(initial.verba_meta_ads) : "");
+  const [verbaGls, setVerbaGls]           = useState<string>(initial?.verba_gls      != null ? String(initial.verba_gls)      : "");
+  const [verbaNextdoor, setVerbaNextdoor] = useState<string>(initial?.verba_outros   != null && (initial?.platforms ?? []).some(p => p.key === 'nextdoor') ? String(initial.verba_outros) : "");
+  const [verbaThumbtack, setVerbaThumbtack] = useState<string>(initial?.verba_outros != null && (initial?.platforms ?? []).some(p => p.key === 'thumbtack') ? String(initial.verba_outros) : "");
+  const [verbaOutros, setVerbaOutros]     = useState<string>(initial?.verba_outros   != null ? String(initial.verba_outros)   : "");
   const [glsAccountId, setGlsAccountId] = useState(initial?.gls_account_id ?? "");
   const [moeda, setMoeda] = useState<'BRL' | 'USD'>(initial?.moeda ?? 'BRL');
 
@@ -562,13 +564,18 @@ export function ClienteModal({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [metaDropdownOpen]);
 
-  // Toggle de plataforma: ao desmarcar limpa as campanhas daquela plataforma
+  // Toggle de plataforma: ao desmarcar limpa campanhas E verba correspondente
   const togglePlatform = (key: PlatformKey) => {
     setActivePlats(prev => {
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
         setCamps(c => ({ ...c, [key]: [] })); // limpa campanhas
+        // Reseta verba da plataforma desmarcada IMEDIATAMENTE
+        if (key === 'meta')      setVerbaMeta("");
+        if (key === 'gls')       setVerbaGls("");
+        if (key === 'nextdoor')  setVerbaNextdoor("");
+        if (key === 'thumbtack') setVerbaThumbtack("");
       } else {
         next.add(key);
       }
@@ -608,9 +615,15 @@ export function ClienteModal({
       meta_status: metaAccountId.trim() ? "vinculado" : "sem_link",
       // ── Metas & Orçamentos ─────────────────────────────────────────────────
       meta_leads_mensal: metaLeadsMensal !== "" ? Number(metaLeadsMensal) : null,
-      verba_meta_ads:    verbaMeta   !== "" ? Number(verbaMeta)   : null,
-      verba_gls:         verbaGls    !== "" ? Number(verbaGls)    : null,
-      verba_outros:      verbaOutros !== "" ? Number(verbaOutros) : null,
+      verba_meta_ads:    verbaMeta      !== "" && activePlats.has('meta')      ? Number(verbaMeta)      : null,
+      verba_gls:         verbaGls       !== "" && activePlats.has('gls')       ? Number(verbaGls)       : null,
+      // verba_outros agrega: Nextdoor + Thumbtack + campo genérico "Outros"
+      verba_outros: (() => {
+        const v = (verbaNextdoor  !== "" && activePlats.has('nextdoor')  ? Number(verbaNextdoor)  : 0)
+                + (verbaThumbtack !== "" && activePlats.has('thumbtack') ? Number(verbaThumbtack) : 0)
+                + (verbaOutros    !== ""                                  ? Number(verbaOutros)    : 0);
+        return v > 0 ? v : null;
+      })(),
       gls_account_id:    glsAccountId.trim() || null,
       moeda,
     };
@@ -885,51 +898,58 @@ export function ClienteModal({
               </div>
             </div>
 
-            {/* Verbas — condicionais por plataforma ativa */}
+            {/* Verbas — condicionais por plataforma ativa, estado separado por plataforma */}
             {(() => {
               const symbol = moeda === 'USD' ? 'US$' : 'R$';
-              const platVerbas: { platKey: PlatformKey; label: string; stateKey: string; value: string; setter: (v: string) => void; borderCls: string }[] = [
-                { platKey: 'meta',      label: `Verba Meta Ads (${symbol})`,   stateKey: 'verbaMeta',    value: verbaMeta,    setter: setVerbaMeta,    borderCls: 'focus:border-blue-500/50'    },
-                { platKey: 'gls',       label: `Verba GLS (${symbol})`,        stateKey: 'verbaGls',     value: verbaGls,     setter: setVerbaGls,     borderCls: 'focus:border-purple-500/50'  },
-                { platKey: 'nextdoor',  label: `Verba Nextdoor (${symbol})`,   stateKey: 'verba',        value: verbaOutros,  setter: setVerbaOutros,  borderCls: 'focus:border-green-500/50'   },
-                { platKey: 'thumbtack', label: `Verba Thumbtack (${symbol})`,  stateKey: 'verba',        value: verbaOutros,  setter: setVerbaOutros,  borderCls: 'focus:border-cyan-500/50'    },
+              const platVerbas: { platKey: PlatformKey; label: string; value: string; setter: (v: string) => void; borderCls: string }[] = [
+                { platKey: 'meta',      label: `Verba Meta Ads (${symbol})`,   value: verbaMeta,      setter: setVerbaMeta,      borderCls: 'focus:border-blue-500/50'    },
+                { platKey: 'gls',       label: `Verba GLS (${symbol})`,        value: verbaGls,       setter: setVerbaGls,       borderCls: 'focus:border-purple-500/50'  },
+                { platKey: 'nextdoor',  label: `Verba Nextdoor (${symbol})`,   value: verbaNextdoor,  setter: setVerbaNextdoor,  borderCls: 'focus:border-green-500/50'   },
+                { platKey: 'thumbtack', label: `Verba Thumbtack (${symbol})`,  value: verbaThumbtack, setter: setVerbaThumbtack, borderCls: 'focus:border-cyan-500/50'    },
               ];
-              // Only show platforms that are active
               const activeVerbas = platVerbas.filter(v => activePlats.has(v.platKey));
-              // Always show "Outros" field
+              // Calcula total: soma todos os ativos + outros
+              const totalOrc = activeVerbas.reduce((acc, v) => acc + (v.value !== "" ? Number(v.value) : 0), 0)
+                + (verbaOutros !== "" ? Number(verbaOutros) : 0);
+              // Grid: 1 coluna se só 1 ativo+outros, 2 colunas se mais
+              const totalCols = activeVerbas.length + 1; // +1 para "Outros"
+              const gridCls = totalCols === 1 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2';
               return (
-                <div className={`grid gap-3 ${activeVerbas.length > 0 ? 'grid-cols-1 sm:grid-cols-2' : 'hidden'}`}>
+                <div className={`grid gap-3 ${gridCls}`}>
                   {activeVerbas.map(v => (
                     <div key={v.platKey} className="space-y-1.5">
-                      <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1.5">
+                      <label className="text-[10px] text-[#4a4844] font-medium flex items-center gap-1.5 min-h-[1.1rem]">
                         {PLATFORM_SVG[v.platKey]}
                         {v.label}
                       </label>
                       <input type="number" min="0" step="0.01" value={v.value} onChange={e => v.setter(e.target.value)}
                         placeholder="0.00"
-                        className={`w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none transition-colors ${v.borderCls}`}/>
+                        className={`w-full h-[42px] bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none transition-colors ${v.borderCls}`}/>
                     </div>
                   ))}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] text-[#4a4844] font-medium">Outras Verbas ({symbol})</label>
+                    <label className="text-[10px] text-[#4a4844] font-medium min-h-[1.1rem] flex items-center">Outras Verbas ({symbol})</label>
                     <input type="number" min="0" step="0.01" value={verbaOutros} onChange={e => setVerbaOutros(e.target.value)}
                       placeholder="0.00"
-                      className="w-full bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/50 transition-colors"/>
+                      className="w-full h-[42px] bg-[#201f1d] border border-[#2e2c29] rounded-xl px-4 py-2.5 text-sm text-[#e8e2d8] placeholder:text-[#4a4844] outline-none focus:border-amber-500/50 transition-colors"/>
                   </div>
                 </div>
               );
             })()}
-            {/* Budget total preview */}
-            {(verbaMeta !== "" || verbaGls !== "" || verbaOutros !== "") && (() => {
-              const total = (verbaMeta !== "" ? Number(verbaMeta) : 0)
-                + (verbaGls !== "" ? Number(verbaGls) : 0)
-                + (verbaOutros !== "" ? Number(verbaOutros) : 0);
+            {/* Budget total preview — moeda exclusiva do seletor */}
+            {(verbaMeta !== "" || verbaGls !== "" || verbaNextdoor !== "" || verbaThumbtack !== "" || verbaOutros !== "") && (() => {
+              const total = (verbaMeta      !== "" ? Number(verbaMeta)      : 0)
+                + (verbaGls       !== "" ? Number(verbaGls)       : 0)
+                + (verbaNextdoor  !== "" ? Number(verbaNextdoor)  : 0)
+                + (verbaThumbtack !== "" ? Number(verbaThumbtack) : 0)
+                + (verbaOutros    !== "" ? Number(verbaOutros)    : 0);
+              const fmtTotal = moeda === 'USD'
+                ? `US$ ${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : `R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
               return (
                 <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#111010]/60 border border-[#2e2c29]">
                   <span className="text-[10px] text-[#7a7268] font-semibold uppercase tracking-widest">Orçamento Total Mensal</span>
-                  <span className="text-sm font-extrabold text-amber-400">
-                    {total.toLocaleString("pt-BR", { style: "currency", currency: moeda ?? "BRL" })}
-                  </span>
+                  <span className="text-sm font-extrabold text-amber-400">{fmtTotal}</span>
                 </div>
               );
             })()}
