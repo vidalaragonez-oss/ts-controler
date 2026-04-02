@@ -643,6 +643,59 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // ── DEBUG: diagnóstico do token e descoberta de páginas ──────────────────
+    // Acesse: GET /api/meta?action=debug&account_id=act_xxx[&token=xxx]
+    // Retorna o que o token enxerga: identidade, páginas, formulários e permissões.
+    if (action === "debug") {
+      const accountId = searchParams.get("account_id") ?? "";
+      const report: Record<string, unknown> = {};
+
+      // 1. Identidade do token
+      try {
+        const me = await metaFetch("/me", { access_token: token, fields: "id,name" });
+        report.me = me;
+      } catch (e) { report.me_error = e instanceof Error ? e.message : String(e); }
+
+      // 2. Permissões do token
+      try {
+        const perms = await metaFetch("/me/permissions", { access_token: token });
+        report.permissions = (perms.data ?? []);
+      } catch (e) { report.permissions_error = e instanceof Error ? e.message : String(e); }
+
+      // 3. Páginas via /me/accounts
+      try {
+        const pagesData = await metaFetch("/me/accounts", { access_token: token, fields: "id,name,access_token", limit: "50" });
+        report.pages_via_me_accounts = pagesData.data ?? [];
+      } catch (e) { report.pages_via_me_accounts_error = e instanceof Error ? e.message : String(e); }
+
+      // 4. page_ids via campanhas da conta
+      if (accountId) {
+        try {
+          const campData = await metaFetch(`/${accountId}/campaigns`, {
+            access_token: token, fields: "id,name,objective,promoted_object", limit: "20",
+          });
+          report.campaigns_sample = (campData.data ?? []);
+        } catch (e) { report.campaigns_error = e instanceof Error ? e.message : String(e); }
+      }
+
+      // 5. Testa leadgen_forms diretamente nas páginas descobertas
+      const pageIds: string[] = [
+        ...((report.pages_via_me_accounts as { id: string }[] | undefined) ?? []).map(p => p.id),
+        ...((report.campaigns_sample as { promoted_object?: { page_id?: string } }[] | undefined) ?? [])
+          .map(c => c.promoted_object?.page_id ?? "").filter(Boolean),
+      ];
+      const formsReport: Record<string, unknown>[] = [];
+      for (const pid of [...new Set(pageIds)].slice(0, 5)) {
+        try {
+          const fd = await metaFetch(`/${pid}/leadgen_forms`, { access_token: token, fields: "id,name,status", limit: "10" });
+          formsReport.push({ page_id: pid, forms: fd.data ?? [], error: null });
+        } catch (e) { formsReport.push({ page_id: pid, forms: [], error: e instanceof Error ? e.message : String(e) }); }
+      }
+      report.leadgen_forms_by_page = formsReport;
+
+      return NextResponse.json(report);
+    }
+
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
 
   } catch (err: unknown) {
