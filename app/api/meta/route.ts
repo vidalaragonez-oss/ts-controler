@@ -24,62 +24,27 @@ async function metaFetch(path: string, params: Record<string, string>) {
 
 type ActionEntry = { action_type: string; value: string };
 
-interface AdInsights {
-  spend: number;
-  results: number;
-  cpr: number;
-}
-
-interface AdNode {
-  id: string;
-  name: string;
-  status: string;
-  insights: AdInsights;
-}
-
-interface AdSetNode {
-  id: string;
-  name: string;
-  status: string;
-  insights: AdInsights;
-  ads: AdNode[];
-}
-
+interface AdInsights { spend: number; results: number; cpr: number; }
+interface AdNode { id: string; name: string; status: string; insights: AdInsights; }
+interface AdSetNode { id: string; name: string; status: string; insights: AdInsights; ads: AdNode[]; }
 interface CampaignNode {
-  id: string;
-  name: string;
-  objective: string;
-  objective_label: string;
-  status: string;
-  insights: AdInsights;
-  adsets: AdSetNode[];
+  id: string; name: string; objective: string; objective_label: string;
+  status: string; insights: AdInsights; adsets: AdSetNode[];
 }
-
 interface ObjectiveGroup {
-  objective: string;
-  objective_label: string;
-  total_spend: number;
-  total_results: number;
-  cpr: number;
+  objective: string; objective_label: string;
+  total_spend: number; total_results: number; cpr: number;
   campaigns: CampaignNode[];
 }
 
-// ─── Mapa de objectives ────────────────────────────────────────────────────────
-
 const OBJECTIVE_LABEL: Record<string, string> = {
-  OUTCOME_LEADS:         "Leads",
-  OUTCOME_ENGAGEMENT:    "Engajamento",
-  OUTCOME_AWARENESS:     "Reconhecimento",
-  OUTCOME_TRAFFIC:       "Tráfego",
-  OUTCOME_SALES:         "Vendas",
-  OUTCOME_APP_PROMOTION: "App",
-  MESSAGES:              "Mensagens",
-  UNKNOWN:               "—",
+  OUTCOME_LEADS: "Leads", OUTCOME_ENGAGEMENT: "Engajamento",
+  OUTCOME_AWARENESS: "Reconhecimento", OUTCOME_TRAFFIC: "Tráfego",
+  OUTCOME_SALES: "Vendas", OUTCOME_APP_PROMOTION: "App",
+  MESSAGES: "Mensagens", UNKNOWN: "—",
 };
 
-// ─── Mapa estrito: objective → action_types que definem "resultado" ────────────
-// SEM fallback genérico. Se o evento não está aqui, results = 0.
-
+// Mapa estrito: objective → action_types que definem "resultado"
 const OBJECTIVE_ACTION_MAP: Record<string, string[]> = {
   OUTCOME_LEADS:      ["lead", "onsite_conversion.lead_grouped"],
   OUTCOME_ENGAGEMENT: ["post_engagement"],
@@ -92,19 +57,16 @@ function extractInsights(
   actions: ActionEntry[],
   cpaList: ActionEntry[],
   spend: number,
-  objective: string = "UNKNOWN",
+  objective = "UNKNOWN",
 ): AdInsights {
   const targetTypes = OBJECTIVE_ACTION_MAP[objective];
   let results = 0;
-
   if (targetTypes) {
     const targetSet = new Set(targetTypes);
     for (const a of actions) {
       if (targetSet.has(a.action_type)) results += parseInt(a.value ?? "0", 10);
     }
   }
-  // SEM fallback — se objective não mapeado ou sem eventos, results = 0
-
   let cpr = 0;
   if (targetTypes) {
     const targetSet = new Set(targetTypes);
@@ -116,11 +78,10 @@ function extractInsights(
     }
   }
   if (cpr === 0 && results > 0) cpr = spend / results;
-
   return { spend, results, cpr };
 }
 
-// ─── Rotas ────────────────────────────────────────────────────────────────────
+// ─── Rota principal ───────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -130,74 +91,58 @@ export async function GET(req: NextRequest) {
   try {
     const token = resolveToken(clientToken);
 
-    // ── Listar contas disponíveis ──────────────────────────────────────────────
+    // ── Listar contas ──────────────────────────────────────────────────────────
     if (action === "accounts") {
       const data = await metaFetch("/me/adaccounts", {
-        access_token: token,
-        fields: "id,name,account_status,currency",
-        limit: "100",
+        access_token: token, fields: "id,name,account_status,currency", limit: "100",
       });
-      const accounts = (data.data ?? []).map((a: Record<string, unknown>) => ({
-        id:       a.id,
-        name:     a.name,
-        status:   a.account_status,
-        currency: a.currency,
-      }));
-      return NextResponse.json({ accounts });
+      return NextResponse.json({
+        accounts: (data.data ?? []).map((a: Record<string, unknown>) => ({
+          id: a.id, name: a.name, status: a.account_status, currency: a.currency,
+        })),
+      });
     }
 
     // ── Auto-sync de leads Meta Ads ────────────────────────────────────────────
     //
-    // PROBLEMA RAIZ (confirmado pelo debug):
-    //   O token é de um "Conversions API System User" — um User Token de sistema.
-    //   A API /me/accounts retorna as páginas, mas com seus próprios Page Access Tokens.
-    //   Para chamar /{pageId}/leadgen_forms, PRECISA usar o Page Access Token da página,
-    //   não o User Token do sistema.
+    // ARQUITETURA CORRETA (System User Token com acesso a múltiplas contas):
     //
-    // SOLUÇÃO:
-    //   1. GET /me/accounts → obtém páginas + page_access_token de cada uma
-    //   2. Para cada página, usa o page_access_token dela (não o token do sistema)
-    //      para chamar /{pageId}/leadgen_forms
-    //   3. Para cada formulário, usa o page_access_token para /{formId}/leads
+    //  O token pode gerenciar dezenas de contas/páginas. Para não misturar leads
+    //  de clientes diferentes, o vínculo é feito assim:
+    //
+    //  1. Busca as campanhas da conta específica (accountId do cliente)
+    //     com promoted_object para extrair os page_ids DESSA conta.
+    //  2. Busca /me/accounts para obter o page_access_token de cada página
+    //     (necessário pois leadgen_forms exige Page Token, não System User Token).
+    //  3. Só processa formulários das páginas que pertencem a ESSA conta.
     //
     if (action === "leads") {
       const accountId = searchParams.get("account_id");
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
       type LeadRow = {
-        meta_lead_id: string;
-        nome: string;
-        email: string;
-        telefone: string;
-        created_time: string;
-        form_id: string;
-        form_name: string;
-        page_name: string;
+        meta_lead_id: string; nome: string; email: string; telefone: string;
+        created_time: string; form_id: string; form_name: string;
       };
-
       const leads: LeadRow[] = [];
 
-      // Filtro: apenas leads dos últimos 15 dias (evita timeout)
+      // Filtro: últimos 15 dias
       const fifteenDaysAgo = Math.floor((Date.now() - 15 * 24 * 60 * 60 * 1000) / 1000);
       const leadsFiltering = JSON.stringify([
         { field: "time_created", operator: "GREATER_THAN", value: fifteenDaysAgo },
       ]);
 
-      // ── Helper: parseia field_data de um lead ────────────────────────────────
-      function parseFieldData(fieldData: { name: string; values: string[] }[]): {
-        nome: string; email: string; telefone: string;
-      } {
+      function parseFieldData(fieldData: { name: string; values: string[] }[]) {
         let nome = ""; let email = ""; let telefone = "";
-        for (const field of (fieldData ?? [])) {
-          const key = (field.name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-          const val = field.values?.[0] ?? "";
+        for (const f of (fieldData ?? [])) {
+          const key = (f.name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          const val = f.values?.[0] ?? "";
           if (!val) continue;
           if (["fullname", "nome", "name", "firstname"].includes(key)) nome = nome ? `${nome} ${val}` : val;
           else if (key === "lastname") nome = nome ? `${nome} ${val}` : val;
           else if (["email", "emailaddress"].includes(key)) email = val;
           else if (["phonenumber", "phone", "telefone", "celular", "whatsapp"].includes(key)) telefone = val;
         }
-        // Fallbacks por padrão de valor
         if (!email) {
           const ef = fieldData?.find(f => (f.values?.[0] ?? "").includes("@"));
           if (ef) email = ef.values?.[0] ?? "";
@@ -209,51 +154,28 @@ export async function GET(req: NextRequest) {
         return { nome: nome || "Lead Meta", email, telefone };
       }
 
-      // ── Helper: busca leads de um formulário usando o Page Access Token ───────
-      async function fetchLeadsForForm(
-        formId: string,
-        formName: string,
-        pageName: string,
-        pageToken: string,
-      ): Promise<void> {
+      async function fetchLeadsForForm(formId: string, formName: string, pageToken: string) {
         let cursor: string | null = null;
         let pageCount = 0;
         while (pageCount < 5) {
           const params: Record<string, string> = {
-            access_token: pageToken,   // ← usa o Page Token, não o System User Token
+            access_token: pageToken,
             fields: "id,field_data,created_time",
             limit: "100",
             filtering: leadsFiltering,
           };
           if (cursor) params.after = cursor;
-
           let leadsData: Record<string, unknown>;
           try {
             leadsData = await metaFetch(`/${formId}/leads`, params);
-          } catch (fetchErr: unknown) {
-            const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-            console.error(`[Meta Leads] form ${formId} (${formName}): ${errMsg}`);
+          } catch (e: unknown) {
+            console.error(`[leads] form ${formId}: ${e instanceof Error ? e.message : String(e)}`);
             break;
           }
-
-          const rows = (leadsData.data ?? []) as {
-            id: string;
-            created_time: string;
-            field_data: { name: string; values: string[] }[];
-          }[];
-
-          for (const row of rows) {
+          for (const row of (leadsData.data ?? []) as { id: string; created_time: string; field_data: { name: string; values: string[] }[] }[]) {
             const { nome, email, telefone } = parseFieldData(row.field_data ?? []);
-            leads.push({
-              meta_lead_id: row.id,
-              nome, email, telefone,
-              created_time: row.created_time,
-              form_id:      formId,
-              form_name:    formName,
-              page_name:    pageName,
-            });
+            leads.push({ meta_lead_id: row.id, nome, email, telefone, created_time: row.created_time, form_id: formId, form_name: formName });
           }
-
           const paging = leadsData.paging as { cursors?: { after?: string }; next?: string } | undefined;
           cursor = paging?.cursors?.after ?? null;
           if (!cursor || !paging?.next) break;
@@ -261,59 +183,87 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // ── 1. Busca páginas + page_access_token via /me/accounts ─────────────────
-      // O System User Token tem acesso a /me/accounts e recebe o access_token de cada página.
-      // Esse page_access_token é o que deve ser usado para leadgen_forms e leads.
-      let pages: { id: string; name: string; access_token: string }[] = [];
+      // ── PASSO 1: Descobre page_ids vinculados a ESTA conta de anúncios ───────
+      // Usa promoted_object das campanhas para garantir que só pega
+      // as páginas que anunciam por esta conta — sem misturar com outros clientes.
+      const accountPageIds = new Set<string>();
+      try {
+        const campData = await metaFetch(`/${accountId}/campaigns`, {
+          access_token: token,
+          fields: "promoted_object",
+          limit: "200",
+        });
+        for (const camp of (campData.data ?? []) as { promoted_object?: { page_id?: string } }[]) {
+          const pid = camp.promoted_object?.page_id;
+          if (pid) accountPageIds.add(pid);
+        }
+      } catch (e: unknown) {
+        console.error(`[leads] Erro ao buscar campanhas de ${accountId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      if (accountPageIds.size === 0) {
+        // Nenhuma página encontrada via campanhas — retorna vazio sem contaminar
+        console.warn(`[leads] Nenhum page_id encontrado para a conta ${accountId}`);
+        return NextResponse.json({ leads: [], pages_scanned: 0 });
+      }
+
+      // ── PASSO 2: Busca page_access_tokens via /me/accounts ───────────────────
+      // O System User Token não pode usar leadgen_forms com token próprio.
+      // /me/accounts retorna o access_token específico de cada página.
+      const pageTokenMap = new Map<string, string>(); // page_id → page_access_token
       try {
         const pagesData = await metaFetch("/me/accounts", {
           access_token: token,
-          fields: "id,name,access_token",   // ← pede o access_token da página
-          limit: "100",
+          fields: "id,access_token",
+          limit: "200",
         });
-        pages = (pagesData.data ?? []) as { id: string; name: string; access_token: string }[];
-      } catch (err: unknown) {
-        console.error(`[Meta Leads] Erro ao listar páginas: ${err instanceof Error ? err.message : String(err)}`);
+        for (const pg of (pagesData.data ?? []) as { id: string; access_token?: string }[]) {
+          if (pg.access_token) pageTokenMap.set(pg.id, pg.access_token);
+        }
+      } catch (e: unknown) {
+        console.error(`[leads] Erro ao buscar page tokens: ${e instanceof Error ? e.message : String(e)}`);
       }
 
-      // ── 2. Para cada Página → formulários → leads (usando o Page Token) ────────
-      for (const pg of pages) {
-        const pageToken = pg.access_token || token; // prefere o page token; fallback pro system token
+      // ── PASSO 3: Processa SOMENTE as páginas desta conta ─────────────────────
+      for (const pageId of accountPageIds) {
+        const pageToken = pageTokenMap.get(pageId);
+        if (!pageToken) {
+          console.warn(`[leads] Sem page token para página ${pageId} — pulando`);
+          continue;
+        }
 
         let forms: { id: string; name: string }[] = [];
         try {
-          const formsData = await metaFetch(`/${pg.id}/leadgen_forms`, {
-            access_token: pageToken,   // ← Page Token aqui
+          const formsData = await metaFetch(`/${pageId}/leadgen_forms`, {
+            access_token: pageToken,
             fields: "id,name,status",
             limit: "100",
           });
           forms = (formsData.data ?? []) as { id: string; name: string }[];
-        } catch (err: unknown) {
-          console.error(`[Meta Leads] Formulários da página ${pg.id} (${pg.name}): ${err instanceof Error ? err.message : String(err)}`);
+        } catch (e: unknown) {
+          console.error(`[leads] Formulários de ${pageId}: ${e instanceof Error ? e.message : String(e)}`);
           continue;
         }
 
         for (const form of forms) {
           try {
-            await fetchLeadsForForm(form.id, form.name, pg.name, pageToken);
-          } catch { /* segue para o próximo formulário */ }
+            await fetchLeadsForForm(form.id, form.name, pageToken);
+          } catch { /* segue */ }
         }
       }
 
-      return NextResponse.json({ leads, pages_scanned: pages.length });
+      return NextResponse.json({ leads, pages_scanned: accountPageIds.size });
     }
 
-    // ── Buscar árvore completa Campaigns → AdSets → Ads com insights ──────────
+    // ── Árvore Radar: Campaigns → AdSets → Ads ────────────────────────────────
     if (action === "tree") {
       const accountId = searchParams.get("account_id");
       const since     = searchParams.get("since");
       const until     = searchParams.get("until");
-
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
       const accountData = await metaFetch(`/${accountId}`, {
-        access_token: token,
-        fields: "account_status,name,currency",
+        access_token: token, fields: "account_status,name,currency",
       });
 
       const timeParam: Record<string, string> = since && until
@@ -337,11 +287,13 @@ export async function GET(req: NextRequest) {
         const objective      = (camp.objective as string) ?? "UNKNOWN";
         const objectiveLabel = OBJECTIVE_LABEL[objective] ?? objective;
 
-        const campInsightRow = ((camp.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
-        const campSpend   = parseFloat((campInsightRow.spend as string) ?? "0") || 0;
-        const campActions = (campInsightRow.actions as ActionEntry[]) ?? [];
-        const campCpa     = (campInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
-        const campInsights = extractInsights(campActions, campCpa, campSpend, objective);
+        const campRow  = ((camp.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
+        const campInsights = extractInsights(
+          (campRow.actions as ActionEntry[]) ?? [],
+          (campRow.cost_per_action_type as ActionEntry[]) ?? [],
+          parseFloat((campRow.spend as string) ?? "0") || 0,
+          objective,
+        );
 
         let adsetNodes: AdSetNode[] = [];
         try {
@@ -351,46 +303,41 @@ export async function GET(req: NextRequest) {
             limit: "100",
             ...timeParam,
           });
-
           for (const adset of (adsetData.data ?? []) as Record<string, unknown>[]) {
-            const adsetId   = adset.id as string;
-            const adsetName = (adset.name as string) ?? "Conjunto";
-
-            const adsetInsightRow = ((adset.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
-            const adsetSpend   = parseFloat((adsetInsightRow.spend as string) ?? "0") || 0;
-            const adsetActions = (adsetInsightRow.actions as ActionEntry[]) ?? [];
-            const adsetCpa     = (adsetInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
-            const adsetInsights = extractInsights(adsetActions, adsetCpa, adsetSpend, objective);
-
+            const adsetRow = ((adset.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
+            const adsetInsights = extractInsights(
+              (adsetRow.actions as ActionEntry[]) ?? [],
+              (adsetRow.cost_per_action_type as ActionEntry[]) ?? [],
+              parseFloat((adsetRow.spend as string) ?? "0") || 0,
+              objective,
+            );
             let adNodes: AdNode[] = [];
             try {
-              const adsData = await metaFetch(`/${adsetId}/ads`, {
+              const adsData = await metaFetch(`/${adset.id as string}/ads`, {
                 access_token: token,
                 fields: `id,name,status,insights{${insightFields}}`,
                 limit: "100",
                 ...timeParam,
               });
-
               adNodes = ((adsData.data ?? []) as Record<string, unknown>[]).map(ad => {
-                const adInsightRow = ((ad.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
-                const adSpend   = parseFloat((adInsightRow.spend as string) ?? "0") || 0;
-                const adActions = (adInsightRow.actions as ActionEntry[]) ?? [];
-                const adCpa     = (adInsightRow.cost_per_action_type as ActionEntry[]) ?? [];
+                const adRow = ((ad.insights as { data?: Record<string, unknown>[] })?.data ?? [])[0] ?? {};
                 return {
-                  id:       ad.id as string,
-                  name:     (ad.name as string) ?? "Anúncio",
-                  status:   (ad.status as string) ?? "UNKNOWN",
-                  insights: extractInsights(adActions, adCpa, adSpend, objective),
+                  id: ad.id as string, name: (ad.name as string) ?? "Anúncio",
+                  status: (ad.status as string) ?? "UNKNOWN",
+                  insights: extractInsights(
+                    (adRow.actions as ActionEntry[]) ?? [],
+                    (adRow.cost_per_action_type as ActionEntry[]) ?? [],
+                    parseFloat((adRow.spend as string) ?? "0") || 0,
+                    objective,
+                  ),
                 };
               });
             } catch { /* sem ads */ }
 
             adsetNodes.push({
-              id:       adsetId,
-              name:     adsetName,
-              status:   (adset.status as string) ?? "UNKNOWN",
-              insights: adsetInsights,
-              ads:      adNodes,
+              id: adset.id as string, name: (adset.name as string) ?? "Conjunto",
+              status: (adset.status as string) ?? "UNKNOWN",
+              insights: adsetInsights, ads: adNodes,
             });
           }
         } catch { /* sem adsets */ }
@@ -402,17 +349,15 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Agrupa por objetivo
       const groupMap = new Map<string, ObjectiveGroup>();
       for (const camp of campaignNodes) {
-        const key = camp.objective;
-        if (!groupMap.has(key)) {
-          groupMap.set(key, {
+        if (!groupMap.has(camp.objective)) {
+          groupMap.set(camp.objective, {
             objective: camp.objective, objective_label: camp.objective_label,
             total_spend: 0, total_results: 0, cpr: 0, campaigns: [],
           });
         }
-        const g = groupMap.get(key)!;
+        const g = groupMap.get(camp.objective)!;
         g.total_spend   += camp.insights.spend;
         g.total_results += camp.insights.results;
         g.campaigns.push(camp);
@@ -434,7 +379,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // ── Insights (legado — badges externos) ───────────────────────────────────
+    // ── Insights legado (badges externos) ─────────────────────────────────────
     if (action === "insights") {
       const accountId = searchParams.get("account_id");
       const since     = searchParams.get("since");
@@ -442,8 +387,7 @@ export async function GET(req: NextRequest) {
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
       const accountData = await metaFetch(`/${accountId}`, {
-        access_token: token,
-        fields: "account_status,name,currency",
+        access_token: token, fields: "account_status,name,currency",
       });
 
       const objectiveMap = new Map<string, string>();
@@ -451,34 +395,27 @@ export async function GET(req: NextRequest) {
         const campData = await metaFetch(`/${accountId}/campaigns`, {
           access_token: token, fields: "id,objective", limit: "500",
         });
-        for (const c of (campData.data ?? []) as { id: string; objective: string }[]) {
+        for (const c of (campData.data ?? []) as { id: string; objective: string }[])
           objectiveMap.set(c.id, c.objective ?? "UNKNOWN");
-        }
       } catch { /* sem permissão */ }
 
       const insightParams: Record<string, string> = {
         access_token: token,
         fields: "campaign_id,campaign_name,spend,actions,cost_per_action_type",
-        level: "campaign",
-        limit: "500",
+        level: "campaign", limit: "500",
       };
-      if (since && until) {
-        insightParams.time_range = JSON.stringify({ since, until });
-      } else {
-        insightParams.date_preset = "maximum";
-      }
+      if (since && until) insightParams.time_range = JSON.stringify({ since, until });
+      else insightParams.date_preset = "maximum";
 
-      const OBJECTIVE_LABEL_MAP: Record<string, string> = {
+      type CampaignRow = {
+        campaign_name: string; objective: string; objective_label: string; spend: string;
+        form_leads: number; msg_leads: number; form_cpl: number; msg_cpl: number;
+      };
+      const OBJ_LABEL: Record<string, string> = {
         OUTCOME_LEADS: "Leads", OUTCOME_ENGAGEMENT: "Engajamento",
         OUTCOME_AWARENESS: "Reconhecimento", OUTCOME_TRAFFIC: "Tráfego",
         OUTCOME_SALES: "Vendas", OUTCOME_APP_PROMOTION: "App",
         MESSAGES: "Mensagens", UNKNOWN: "—",
-      };
-
-      type CampaignRow = {
-        campaign_name: string; objective: string; objective_label: string;
-        spend: string; form_leads: number; msg_leads: number;
-        form_cpl: number; msg_cpl: number;
       };
 
       let totalSpend = 0; let totalFormLeads = 0; let totalMsgLeads = 0;
@@ -486,42 +423,27 @@ export async function GET(req: NextRequest) {
 
       try {
         const insightData = await metaFetch(`/${accountId}/insights`, insightParams);
-        const rows: Record<string, unknown>[] = insightData.data ?? [];
-
-        for (const row of rows) {
+        for (const row of (insightData.data ?? []) as Record<string, unknown>[]) {
           const campId    = (row.campaign_id as string) ?? "";
           const campSpend = parseFloat((row.spend as string) ?? "0");
           totalSpend += campSpend;
-
-          const objective      = objectiveMap.get(campId) ?? "UNKNOWN";
-          const objectiveLabel = OBJECTIVE_LABEL_MAP[objective] ?? objective;
-          const actions: ActionEntry[] = (row.actions as ActionEntry[]) ?? [];
-          const cpaList: ActionEntry[] = (row.cost_per_action_type as ActionEntry[]) ?? [];
-
-          // Usa extractInsights estrito por objective
-          const ins = extractInsights(actions, cpaList, campSpend, objective);
-
-          // Separa form_leads vs msg_leads baseado no objective
-          let campFormLeads = 0; let campMsgLeads = 0;
-          let campFormCpl = 0;   let campMsgCpl = 0;
-
-          if (objective === "OUTCOME_LEADS") {
-            campFormLeads = ins.results;
-            campFormCpl   = ins.cpr;
-          } else if (objective === "MESSAGES") {
-            campMsgLeads = ins.results;
-            campMsgCpl   = ins.cpr;
-          }
-
+          const objective = objectiveMap.get(campId) ?? "UNKNOWN";
+          const ins = extractInsights(
+            (row.actions as ActionEntry[]) ?? [],
+            (row.cost_per_action_type as ActionEntry[]) ?? [],
+            campSpend, objective,
+          );
+          const campFormLeads = objective === "OUTCOME_LEADS" ? ins.results : 0;
+          const campMsgLeads  = objective === "MESSAGES"      ? ins.results : 0;
           totalFormLeads += campFormLeads;
           totalMsgLeads  += campMsgLeads;
-
           campaigns.push({
             campaign_name:   (row.campaign_name as string) ?? "Campanha",
-            objective, objective_label: objectiveLabel,
+            objective, objective_label: OBJ_LABEL[objective] ?? objective,
             spend:     campSpend.toFixed(2),
             form_leads: campFormLeads, msg_leads: campMsgLeads,
-            form_cpl:   campFormCpl,  msg_cpl:   campMsgCpl,
+            form_cpl:   objective === "OUTCOME_LEADS" ? ins.cpr : 0,
+            msg_cpl:    objective === "MESSAGES"      ? ins.cpr : 0,
           });
         }
       } catch { /* sem dados */ }
@@ -530,8 +452,6 @@ export async function GET(req: NextRequest) {
       const cpl        = totalLeads > 0 ? totalSpend / totalLeads : 0;
       const formSpend  = totalLeads > 0 && totalFormLeads > 0 ? totalSpend * (totalFormLeads / totalLeads) : 0;
       const msgSpend   = totalLeads > 0 && totalMsgLeads  > 0 ? totalSpend * (totalMsgLeads  / totalLeads) : 0;
-      const formCpl    = totalFormLeads > 0 ? formSpend / totalFormLeads : 0;
-      const msgCpl     = totalMsgLeads  > 0 ? msgSpend  / totalMsgLeads  : 0;
 
       return NextResponse.json({
         account_status: accountData.account_status as number,
@@ -539,63 +459,68 @@ export async function GET(req: NextRequest) {
         currency:       (accountData.currency as string) ?? "BRL",
         spend: totalSpend, leads: totalFormLeads, messages: totalMsgLeads,
         total_leads: totalLeads, cpl,
-        form_leads: totalFormLeads, form_spend: formSpend, form_cpl: formCpl,
-        msg_leads: totalMsgLeads,  msg_spend: msgSpend,   msg_cpl: msgCpl,
+        form_leads: totalFormLeads, form_spend: formSpend,
+        form_cpl: totalFormLeads > 0 ? formSpend / totalFormLeads : 0,
+        msg_leads: totalMsgLeads, msg_spend: msgSpend,
+        msg_cpl: totalMsgLeads > 0 ? msgSpend / totalMsgLeads : 0,
         campaigns,
       });
     }
 
-    // ── DEBUG: diagnóstico do token (não expor em produção) ───────────────────
+    // ── DEBUG (diagnóstico) ────────────────────────────────────────────────────
     if (action === "debug") {
       const accountId = searchParams.get("account_id") ?? "";
       const report: Record<string, unknown> = {};
 
-      try {
-        report.me = await metaFetch("/me", { access_token: token, fields: "id,name" });
-      } catch (e) { report.me_error = e instanceof Error ? e.message : String(e); }
+      try { report.me = await metaFetch("/me", { access_token: token, fields: "id,name" }); }
+      catch (e) { report.me_error = e instanceof Error ? e.message : String(e); }
 
       try {
         const perms = await metaFetch("/me/permissions", { access_token: token });
         report.permissions = perms.data ?? [];
       } catch (e) { report.permissions_error = e instanceof Error ? e.message : String(e); }
 
-      try {
-        const pd = await metaFetch("/me/accounts", {
-          access_token: token, fields: "id,name,access_token", limit: "50",
-        });
-        // Oculta os tokens completos por segurança — mostra só os primeiros 20 chars
-        report.pages_via_me_accounts = ((pd.data ?? []) as { id: string; name: string; access_token?: string }[])
-          .map(p => ({ id: p.id, name: p.name, has_page_token: !!p.access_token }));
-      } catch (e) { report.pages_via_me_accounts_error = e instanceof Error ? e.message : String(e); }
-
-      if (accountId && accountId !== "SEU_ACT_ID") {
+      // page_ids desta conta
+      if (accountId) {
+        const pageIds = new Set<string>();
         try {
           const campData = await metaFetch(`/${accountId}/campaigns`, {
-            access_token: token, fields: "id,name,objective,promoted_object", limit: "10",
+            access_token: token, fields: "id,name,objective,promoted_object", limit: "20",
           });
           report.campaigns_sample = campData.data ?? [];
-        } catch (e) { report.campaigns_error = e instanceof Error ? e.message : String(e); }
-      }
-
-      // Testa leadgen_forms usando o page_access_token correto
-      try {
-        const pagesWithToken = await metaFetch("/me/accounts", {
-          access_token: token, fields: "id,name,access_token", limit: "10",
-        });
-        const formsReport = [];
-        for (const pg of ((pagesWithToken.data ?? []) as { id: string; name: string; access_token: string }[]).slice(0, 5)) {
-          try {
-            const fd = await metaFetch(`/${pg.id}/leadgen_forms`, {
-              access_token: pg.access_token,   // ← usa o page token
-              fields: "id,name,status", limit: "5",
-            });
-            formsReport.push({ page_id: pg.id, page_name: pg.name, forms_count: (fd.data ?? []).length, forms: fd.data ?? [], error: null });
-          } catch (e) {
-            formsReport.push({ page_id: pg.id, page_name: pg.name, forms_count: 0, error: e instanceof Error ? e.message : String(e) });
+          for (const c of (campData.data ?? []) as { promoted_object?: { page_id?: string } }[]) {
+            const pid = c.promoted_object?.page_id;
+            if (pid) pageIds.add(pid);
           }
+        } catch (e) { report.campaigns_error = e instanceof Error ? e.message : String(e); }
+        report.page_ids_from_campaigns = [...pageIds];
+
+        // Testa formulários usando page token correto
+        if (pageIds.size > 0) {
+          const pageTokenMap = new Map<string, string>();
+          try {
+            const pd = await metaFetch("/me/accounts", {
+              access_token: token, fields: "id,name,access_token", limit: "200",
+            });
+            for (const pg of (pd.data ?? []) as { id: string; name: string; access_token?: string }[]) {
+              if (pg.access_token) pageTokenMap.set(pg.id, pg.access_token);
+            }
+          } catch (e) { report.page_tokens_error = e instanceof Error ? e.message : String(e); }
+
+          const formsReport = [];
+          for (const pid of pageIds) {
+            const pt = pageTokenMap.get(pid);
+            if (!pt) { formsReport.push({ page_id: pid, error: "sem page token" }); continue; }
+            try {
+              const fd = await metaFetch(`/${pid}/leadgen_forms`, {
+                access_token: pt, fields: "id,name,status", limit: "10",
+              });
+              formsReport.push({ page_id: pid, forms: fd.data ?? [], error: null });
+            } catch (e) { formsReport.push({ page_id: pid, forms: [], error: e instanceof Error ? e.message : String(e) }); }
+          }
+          report.leadgen_forms_by_page = formsReport;
         }
-        report.leadgen_forms_by_page = formsReport;
-      } catch (e) { report.leadgen_forms_error = e instanceof Error ? e.message : String(e); }
+      }
 
       return NextResponse.json(report);
     }
