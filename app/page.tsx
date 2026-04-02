@@ -3242,8 +3242,9 @@ export default function Home() {
         setAllLeadsForDashboard(prev => [...((inserted as Lead[]) ?? []), ...prev]);
         toast.success(`✅ ${inserted.length} lead(s) Meta sincronizado(s) automaticamente.`);
       }
-    } catch {
-      // Silencioso — auto-sync não deve bloquear a UX
+    } catch (err: unknown) {
+      // Auto-sync não bloqueia a UX, mas loga para diagnóstico
+      console.error("[syncMetaLeads] Erro no auto-sync de leads Meta:", err instanceof Error ? err.message : String(err));
     }
   };
 
