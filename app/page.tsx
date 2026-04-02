@@ -3210,8 +3210,6 @@ export default function Home() {
 
   // ── Auto-Sync: busca leads Meta e faz upsert no Supabase ─────────────────
   // ── Limpa leads Meta contaminados e re-sincroniza APENAS este cliente ────────
-  // SEGURO: só apaga leads com meta_lead_id (vindos da API Meta) deste cliente.
-  // Nunca toca em leads de outros clientes nem em leads manuais (sem meta_lead_id).
   const cleanupAndResyncMetaLeads = async (
     clienteId: string,
     accountId: string,
@@ -3220,30 +3218,32 @@ export default function Home() {
     operacaoNome: string,
   ) => {
     try {
-      toast.loading("🧹 Limpando leads Meta incorretos...", { id: "cleanup" });
+      toast.loading("🧹 Removendo duplicatas e leads incorretos...", { id: "cleanup" });
 
-      // Apaga SOMENTE leads com meta_lead_id deste cliente específico
-      // (leads manuais não têm meta_lead_id e não são afetados)
+      // Passo 1: Remove TODOS os leads com meta_lead_id deste cliente
+      // (leads manuais sem meta_lead_id não são afetados)
       const { error: delError } = await supabase
         .from("leads")
         .delete()
-        .eq("cliente", clienteId)          // ← escopo: só este cliente
-        .not("meta_lead_id", "is", null);  // ← só leads vindos da API Meta
-
+        .eq("cliente", clienteId)
+        .not("meta_lead_id", "is", null);
       if (delError) throw delError;
 
       toast.loading("🔄 Re-sincronizando leads corretos...", { id: "cleanup" });
 
-      // Re-sincroniza com a lógica correta (account-scoped)
+      // Passo 2: Re-sincroniza com lógica account-scoped
       await syncMetaLeads(clienteId, accountId, token, operacaoId, operacaoNome);
 
-      // Recarrega leads na tela
+      // Passo 3: Recarrega leads na tela
       await fetchLeads(clienteId);
       toast.success("✅ Leads Meta re-sincronizados!", { id: "cleanup" });
     } catch (err: unknown) {
       toast.error(`Erro: ${err instanceof Error ? err.message : "Erro desconhecido"}`, { id: "cleanup" });
     }
   };
+
+  // Lock para evitar sync concorrente (auto-sync + cleanup ao mesmo tempo)
+  const metaSyncRunning = useRef(false);
 
   const syncMetaLeads = async (
     clienteId: string,
@@ -3252,6 +3252,9 @@ export default function Home() {
     operacaoId: string,
     operacaoNome: string,
   ) => {
+    // Evita dois syncs rodando ao mesmo tempo para o mesmo cliente
+    if (metaSyncRunning.current) return;
+    metaSyncRunning.current = true;
     try {
       const params = new URLSearchParams({ action: "leads", account_id: accountId });
       if (token) params.set("token", token);
@@ -3287,15 +3290,20 @@ export default function Home() {
         operacao_id:  operacaoId,
       }));
 
-      const { data: inserted, error } = await supabase.from("leads").insert(rows).select();
+      // upsert: se meta_lead_id já existir (race condition), não duplica
+      const { data: inserted, error } = await supabase
+        .from("leads")
+        .upsert(rows, { onConflict: "meta_lead_id", ignoreDuplicates: true })
+        .select();
       if (error) throw error;
       if (inserted?.length) {
         setAllLeadsForDashboard(prev => [...((inserted as Lead[]) ?? []), ...prev]);
         toast.success(`✅ ${inserted.length} lead(s) Meta sincronizado(s) automaticamente.`);
       }
     } catch (err: unknown) {
-      // Auto-sync não bloqueia a UX, mas loga para diagnóstico
-      console.error("[syncMetaLeads] Erro no auto-sync de leads Meta:", err instanceof Error ? err.message : String(err));
+      console.error("[syncMetaLeads] Erro:", err instanceof Error ? err.message : String(err));
+    } finally {
+      metaSyncRunning.current = false;
     }
   };
 
