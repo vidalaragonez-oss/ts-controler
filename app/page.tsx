@@ -1906,9 +1906,7 @@ function EditClienteModal({
     cliente.verba_gls != null ? String(cliente.verba_gls) : ""
   );
   const [verbaOutros, setVerbaOutros] = useState<string>(
-    (cliente as Cliente & { verba_outros?: number | null }).verba_outros != null
-      ? String((cliente as Cliente & { verba_outros?: number | null }).verba_outros)
-      : ""
+    cliente.verba_outros != null ? String(cliente.verba_outros) : ""
   );
 
   const togglePlatform = (key: PlatformKey) => {
@@ -3745,9 +3743,13 @@ export default function Home() {
                   {(() => {
                     const vm = clienteAtivo.verba_meta_ads ?? 0;
                     const vg = clienteAtivo.verba_gls ?? 0;
-                    const vo = (clienteAtivo as Cliente & { verba_outros?: number | null }).verba_outros ?? 0;
+                    const vo = clienteAtivo.verba_outros ?? 0;
                     const total = vm + vg + vo;
                     if (total <= 0) return null;
+                    const isUSD = (clienteAtivo.moeda ?? "BRL") === "USD";
+                    const detailSym = isUSD ? "US$" : "R$";
+                    const detailLocale = isUSD ? "en-US" : "pt-BR";
+                    const fmtVal = (v: number) => `${detailSym} ${v.toLocaleString(detailLocale, { maximumFractionDigits: 0 })}`;
                     return (
                       <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/6 border border-amber-500/20">
                         <span className="text-[9px] font-bold uppercase tracking-widest text-amber-500/60 flex items-center gap-1">
@@ -3755,21 +3757,21 @@ export default function Home() {
                           Orçamento Mensal Planejado
                         </span>
                         <span className="text-sm font-extrabold text-amber-400">
-                          {sym} {total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {detailSym} {total.toLocaleString(detailLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                         {vm > 0 && (
                           <span className="text-[9px] text-[#7a7268] font-semibold">
-                            Meta {vm.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                            Meta {fmtVal(vm)}
                           </span>
                         )}
                         {vg > 0 && (
                           <span className="text-[9px] text-[#7a7268] font-semibold">
-                            · GLS {vg.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                            · GLS {fmtVal(vg)}
                           </span>
                         )}
                         {vo > 0 && (
                           <span className="text-[9px] text-[#7a7268] font-semibold">
-                            · Outros {vo.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                            · Outros {fmtVal(vo)}
                           </span>
                         )}
                       </div>
@@ -3934,7 +3936,7 @@ export default function Home() {
                 onFetch={fetchMetaInsights}
                 verbaMeta={clienteAtivo.verba_meta_ads ?? null}
                 verbaGls={clienteAtivo.verba_gls ?? null}
-                moedaCliente={(clienteAtivo as Cliente & { moeda?: 'BRL' | 'USD' | null }).moeda ?? null}
+                moedaCliente={clienteAtivo.moeda ?? null}
               />
             )}
 
