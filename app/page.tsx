@@ -3256,7 +3256,6 @@ export default function Home() {
     operacaoId: string,
     operacaoNome: string,
   ) => {
-    // Evita dois syncs rodando ao mesmo tempo para o mesmo cliente
     if (metaSyncRunning.current) return;
     metaSyncRunning.current = true;
     try {
@@ -3266,26 +3265,35 @@ export default function Home() {
       const json = await res.json();
       if (json.error || !json.leads?.length) return;
 
-      // Busca TODOS os meta_lead_ids já existentes para este cliente
+      // Busca leads existentes deste cliente para deduplicar
       const { data: existing } = await supabase
         .from("leads")
-        .select("meta_lead_id")
-        .eq("cliente", clienteId)
-        .not("meta_lead_id", "is", null);
+        .select("meta_lead_id, email, nome")
+        .eq("cliente", clienteId);
 
-      const existingIds = new Set((existing ?? []).map((r: { meta_lead_id: string }) => r.meta_lead_id));
+      const existingMetaIds = new Set(
+        (existing ?? []).map((r: { meta_lead_id: string }) => r.meta_lead_id).filter(Boolean)
+      );
+      // Chave secundária: email normalizado (evita duplicar mesmo lead sem meta_lead_id)
+      const existingEmails = new Set(
+        (existing ?? []).map((r: { email: string }) => (r.email ?? "").toLowerCase().trim()).filter(Boolean)
+      );
 
-      // Deduplicação dupla:
-      // 1. Remove os que já existem no banco
-      // 2. Remove duplicatas dentro do próprio array retornado pela API
+      // Deduplicação tripla:
+      // 1. meta_lead_id já no banco
+      // 2. email já no banco
+      // 3. duplicatas dentro do próprio array retornado pela API
       const seenInBatch = new Set<string>();
       const novos = (json.leads as {
         meta_lead_id: string; nome: string; email: string;
         telefone: string; created_time: string;
       }[]).filter(l => {
-        if (existingIds.has(l.meta_lead_id)) return false;
-        if (seenInBatch.has(l.meta_lead_id)) return false;
-        seenInBatch.add(l.meta_lead_id);
+        if (existingMetaIds.has(l.meta_lead_id)) return false;
+        const emailKey = (l.email ?? "").toLowerCase().trim();
+        if (emailKey && existingEmails.has(emailKey)) return false;
+        const batchKey = l.meta_lead_id || emailKey;
+        if (batchKey && seenInBatch.has(batchKey)) return false;
+        if (batchKey) seenInBatch.add(batchKey);
         return true;
       });
 
@@ -3307,7 +3315,7 @@ export default function Home() {
       if (error) throw error;
       if (inserted?.length) {
         setAllLeadsForDashboard(prev => [...((inserted as Lead[]) ?? []), ...prev]);
-        toast.success(`✅ ${inserted.length} lead(s) Meta sincronizado(s) automaticamente.`);
+        toast.success(`✅ ${inserted.length} lead(s) Meta sincronizado(s).`);
       }
     } catch (err: unknown) {
       console.error("[syncMetaLeads] Erro:", err instanceof Error ? err.message : String(err));
