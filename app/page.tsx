@@ -1362,6 +1362,28 @@ type OtherCampaignDetail = {
   spend: number;
 };
 
+// ─── Tipos para a árvore Radar ────────────────────────────────────────────────
+interface TreeAdInsights { spend: number; results: number; cpr: number; }
+interface TreeAd      { id: string; name: string; status: string; insights: TreeAdInsights; }
+interface TreeAdSet   { id: string; name: string; status: string; insights: TreeAdInsights; ads: TreeAd[]; }
+interface TreeCampaign {
+  id: string; name: string; objective: string; objective_label: string;
+  status: string; insights: TreeAdInsights; adsets: TreeAdSet[];
+}
+interface TreeObjectiveGroup {
+  objective: string; objective_label: string;
+  total_spend: number; total_results: number; cpr: number;
+  campaigns: TreeCampaign[];
+}
+interface MetaTreeData {
+  account_status: number;
+  account_name:   string;
+  currency:       string;
+  groups:         TreeObjectiveGroup[];
+  loading:        boolean;
+  error?:         string;
+}
+
 type MetaInsightData = {
   account_status: number;
   spend: number;
@@ -2248,43 +2270,270 @@ const RADAR_PRESET_LABELS: Record<RadarPreset, string> = {
   today: "Hoje", yesterday: "Ontem", "7d": "7 dias", "30d": "30 dias", custom: "Custom",
 };
 
-// ─── RadarWrapper: componente com estado próprio ──────────────────────────────
-function renderRadar({
-  data,
-  preset,
-  customFrom,
-  customTo,
-  showCustom,
-  onPresetClick,
-  onCustomFromChange,
-  onCustomToChange,
-  onCustomApply,
-  verbaMeta,
-  verbaGls,
-  moedaCliente,
+// ─── Status badge helper ──────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: string }) {
+  const s = (status ?? "").toUpperCase();
+  const cls = s === "ACTIVE" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+    : s === "PAUSED"  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+    : "bg-[#2e2c29] text-[#7a7268] border-[#2e2c29]";
+  const label = s === "ACTIVE" ? "Ativo" : s === "PAUSED" ? "Pausado" : s;
+  return <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${cls}`}>{label}</span>;
+}
+
+// ─── Skeleton Radar ───────────────────────────────────────────────────────────
+function RadarSkeleton() {
+  return (
+    <div className="rounded-xl border border-blue-500/20 bg-[#111827]/60 p-4 space-y-4 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-3.5 h-3.5 rounded bg-blue-500/20" />
+          <div className="h-3 w-28 bg-[#2e2c29] rounded" />
+        </div>
+        <div className="flex gap-1">
+          {[1,2,3,4,5].map(i => <div key={i} className="h-6 w-12 bg-[#2e2c29] rounded-lg" />)}
+        </div>
+      </div>
+      {/* Totais skeleton */}
+      <div className="grid grid-cols-3 gap-3 pb-3 border-b border-[#2e2c29]">
+        {[1,2,3].map(i => (
+          <div key={i} className="space-y-1.5">
+            <div className="h-2 w-16 bg-[#2e2c29] rounded" />
+            <div className="h-5 w-24 bg-[#2e2c29] rounded" />
+          </div>
+        ))}
+      </div>
+      {/* Grupos skeleton */}
+      {[1,2].map(i => (
+        <div key={i} className="rounded-lg border border-[#2e2c29] p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="h-3 w-20 bg-[#2e2c29] rounded" />
+            <div className="flex gap-4">
+              <div className="h-3 w-16 bg-[#2e2c29] rounded" />
+              <div className="h-3 w-12 bg-[#2e2c29] rounded" />
+              <div className="h-3 w-16 bg-[#2e2c29] rounded" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Radar Tree Drill-down ────────────────────────────────────────────────────
+function RadarTree({
+  treeData,
+  symbol,
 }: {
-  data: MetaInsightData;
-  preset: RadarPreset;
-  customFrom: string;
-  customTo: string;
-  showCustom: boolean;
-  onPresetClick: (p: RadarPreset) => void;
-  onCustomFromChange: (v: string) => void;
-  onCustomToChange: (v: string) => void;
-  onCustomApply: () => void;
-  verbaMeta?: number | null;
-  verbaGls?: number | null;
+  treeData: MetaTreeData;
+  symbol: string;
+}) {
+  const [openGroups,    setOpenGroups]    = useState<Set<string>>(new Set());
+  const [openCampaigns, setOpenCampaigns] = useState<Set<string>>(new Set());
+  const [openAdSets,    setOpenAdSets]    = useState<Set<string>>(new Set());
+
+  const fmt    = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtInt = (v: number) => v.toLocaleString("pt-BR");
+
+  const toggle = (set: Set<string>, key: string, setter: (s: Set<string>) => void) => {
+    const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); setter(n);
+  };
+
+  const totalSpend   = treeData.groups.reduce((s, g) => s + g.total_spend, 0);
+  const totalResults = treeData.groups.reduce((s, g) => s + g.total_results, 0);
+  const totalCpr     = totalResults > 0 ? totalSpend / totalResults : 0;
+
+  return (
+    <div className="space-y-3">
+      {/* ── Totais globais ── */}
+      <div className="grid grid-cols-3 gap-3 pb-3 border-b border-[#2e2c29]">
+        <div>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Total</p>
+          <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(totalSpend)}</p>
+        </div>
+        <div>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Resultados</p>
+          <p className="text-sm font-extrabold text-[#e8e2d8]">{fmtInt(totalResults)}</p>
+        </div>
+        <div>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Custo/Resultado</p>
+          <p className="text-sm font-extrabold text-[#e8e2d8]">{totalResults > 0 ? `${symbol} ${fmt(totalCpr)}` : "—"}</p>
+        </div>
+      </div>
+
+      {/* ── Sem dados ── */}
+      {treeData.groups.length === 0 && (
+        <p className="text-[10px] text-[#4a4844] italic text-center py-2">Nenhum dado para o período selecionado.</p>
+      )}
+
+      {/* ── Nível 1: Grupos por Objetivo ── */}
+      {treeData.groups.map(group => {
+        const gKey   = group.objective;
+        const gOpen  = openGroups.has(gKey);
+        return (
+          <div key={gKey} className="rounded-xl border border-[#2e2c29] overflow-hidden bg-[#0f1520]/60">
+            {/* Header do grupo */}
+            <button
+              onClick={() => toggle(openGroups, gKey, setOpenGroups)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-blue-500/5 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <ChevronDown size={13} className={`text-blue-400 transition-transform shrink-0 ${gOpen ? "rotate-180" : ""}`} />
+                <span className="text-xs font-bold text-blue-300">{group.objective_label}</span>
+                <span className="text-[10px] text-[#7a7268] bg-[#1a1917] border border-[#2e2c29] px-1.5 py-0.5 rounded-full">
+                  {group.campaigns.length} camp.
+                </span>
+              </div>
+              <div className="flex items-center gap-4 shrink-0">
+                <div className="text-right">
+                  <p className="text-[9px] text-[#4a4844] font-bold uppercase">Gasto</p>
+                  <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(group.total_spend)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] text-[#4a4844] font-bold uppercase">Resultados</p>
+                  <p className="text-xs font-extrabold text-emerald-400">{fmtInt(group.total_results)}</p>
+                </div>
+                <div className="text-right hidden sm:block">
+                  <p className="text-[9px] text-[#4a4844] font-bold uppercase">Custo/Res.</p>
+                  <p className="text-xs font-extrabold text-[#c8c0b4]">{group.total_results > 0 ? `${symbol} ${fmt(group.cpr)}` : "—"}</p>
+                </div>
+              </div>
+            </button>
+
+            {/* ── Nível 2: Campanhas ── */}
+            {gOpen && (
+              <div className="border-t border-[#2e2c29] bg-[#0c1018]/40">
+                {group.campaigns.map(camp => {
+                  const cKey  = camp.id;
+                  const cOpen = openCampaigns.has(cKey);
+                  return (
+                    <div key={cKey} className="border-b border-[#1e2330]/60 last:border-b-0">
+                      <button
+                        onClick={() => toggle(openCampaigns, cKey, setOpenCampaigns)}
+                        className="w-full flex items-center justify-between px-5 py-2.5 hover:bg-[#1a2235]/60 transition-colors text-left"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <ChevronDown size={11} className={`text-[#4a4844] transition-transform shrink-0 ${cOpen ? "rotate-180" : ""}`} />
+                          <span className="text-[11px] font-semibold text-[#c8c0b4] truncate">{camp.name}</span>
+                          <StatusBadge status={camp.status} />
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0 ml-2">
+                          <div className="text-right">
+                            <p className="text-[8px] text-[#4a4844] font-bold uppercase">Gasto</p>
+                            <p className="text-[10px] font-bold text-[#e8e2d8]">{camp.insights.spend > 0 ? `${symbol} ${fmt(camp.insights.spend)}` : "—"}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[8px] text-[#4a4844] font-bold uppercase">Res.</p>
+                            <p className="text-[10px] font-bold text-emerald-400">{camp.insights.results > 0 ? fmtInt(camp.insights.results) : "—"}</p>
+                          </div>
+                          <div className="text-right hidden sm:block">
+                            <p className="text-[8px] text-[#4a4844] font-bold uppercase">C/Res.</p>
+                            <p className="text-[10px] font-bold text-[#a09890]">{camp.insights.results > 0 ? `${symbol} ${fmt(camp.insights.cpr)}` : "—"}</p>
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* ── Nível 3: AdSets ── */}
+                      {cOpen && camp.adsets.length > 0 && (
+                        <div className="bg-[#09111e]/50 border-t border-[#1e2330]/40">
+                          {camp.adsets.map(adset => {
+                            const aKey  = adset.id;
+                            const aOpen = openAdSets.has(aKey);
+                            return (
+                              <div key={aKey} className="border-b border-[#1e2330]/30 last:border-b-0">
+                                <button
+                                  onClick={() => toggle(openAdSets, aKey, setOpenAdSets)}
+                                  className="w-full flex items-center justify-between px-7 py-2 hover:bg-[#1a2235]/40 transition-colors text-left"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <ChevronDown size={10} className={`text-[#3a3835] transition-transform shrink-0 ${aOpen ? "rotate-180" : ""}`} />
+                                    <span className="text-[10px] font-medium text-[#a09890] truncate">{adset.name}</span>
+                                    <StatusBadge status={adset.status} />
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0 ml-2">
+                                    <span className="text-[9px] text-[#7a7268]">{adset.insights.spend > 0 ? `${symbol} ${fmt(adset.insights.spend)}` : "—"}</span>
+                                    <span className="text-[9px] text-emerald-500/70">{adset.insights.results > 0 ? `${fmtInt(adset.insights.results)} res.` : "—"}</span>
+                                    <span className="text-[9px] text-[#7a7268] hidden sm:inline">{adset.insights.results > 0 ? `${symbol} ${fmt(adset.insights.cpr)}/res.` : ""}</span>
+                                  </div>
+                                </button>
+
+                                {/* ── Nível 4: Anúncios ── */}
+                                {aOpen && adset.ads.length > 0 && (
+                                  <div className="bg-[#060e18]/60 border-t border-[#1a2235]/30">
+                                    {adset.ads.map(ad => (
+                                      <div key={ad.id}
+                                        className="flex items-center justify-between px-9 py-1.5 border-b border-[#1a2235]/20 last:border-b-0">
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <span className="w-1 h-1 rounded-full bg-[#2e2c29] shrink-0" />
+                                          <span className="text-[9px] text-[#7a7268] truncate">{ad.name}</span>
+                                          <StatusBadge status={ad.status} />
+                                        </div>
+                                        <div className="flex items-center gap-3 shrink-0 ml-2">
+                                          <span className="text-[9px] text-[#4a4844]">{ad.insights.spend > 0 ? `${symbol} ${fmt(ad.insights.spend)}` : "—"}</span>
+                                          <span className="text-[9px] text-emerald-600/60">{ad.insights.results > 0 ? `${fmtInt(ad.insights.results)} res.` : "—"}</span>
+                                          <span className="text-[9px] text-[#4a4844] hidden sm:inline">{ad.insights.results > 0 ? `${symbol} ${fmt(ad.insights.cpr)}/res.` : ""}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {aOpen && adset.ads.length === 0 && (
+                                  <p className="text-[9px] text-[#4a4844] italic px-9 py-2">Nenhum anúncio encontrado.</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {cOpen && camp.adsets.length === 0 && (
+                        <p className="text-[9px] text-[#4a4844] italic px-7 py-2 bg-[#09111e]/50">Nenhum conjunto encontrado.</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── RadarWrapper: componente com estado próprio ──────────────────────────────
+function RadarWrapper({
+  clienteId, accountId, token, treeData, onFetch, moedaCliente,
+}: {
+  clienteId:    string;
+  accountId:    string;
+  token:        string | null;
+  treeData:     MetaTreeData | null;
+  onFetch:      (clienteId: string, accountId: string, token: string | null, since: string, until: string) => void;
   moedaCliente?: 'BRL' | 'USD' | null;
 }) {
-  const fmt = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtInt = (v: number) => v.toLocaleString("pt-BR");
-  // moedaCliente has priority over API-reported currency (fixes sync bug)
-  const symbol = (moedaCliente ?? (data?.currency ?? "BRL")) === "USD" ? "US$" : "R$";
+  const [preset,     setPreset]     = useState<RadarPreset>("7d");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo,   setCustomTo]   = useState("");
+  const [showCustom, setShowCustom] = useState(false);
 
-  const hasForm  = data && !data.loading && !data.error && data.form_leads > 0;
-  const hasMsg   = data && !data.loading && !data.error && data.msg_leads  > 0;
-  const hasOther = data && !data.loading && !data.error && (data.other_spend ?? 0) > 0;
-  const hasData  = data && !data.loading && !data.error && data.account_status >= 1;
+  const symbol = (moedaCliente ?? (treeData?.currency ?? "BRL")) === "USD" ? "US$" : "R$";
+
+  // Dispara fetch ao montar e ao mudar preset (exceto custom)
+  useEffect(() => {
+    if (preset === "custom") return;
+    const { since, until } = computeRadarDates(preset);
+    onFetch(clienteId, accountId, token, since, until);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clienteId, preset]);
+
+  const handlePresetClick = (p: RadarPreset) => {
+    setPreset(p); setShowCustom(p === "custom");
+  };
+  const handleCustomApply = () => {
+    if (!customFrom || !customTo) return;
+    onFetch(clienteId, accountId, token, customFrom, customTo);
+  };
+
+  const isLoading = !treeData || treeData.loading;
 
   return (
     <div className="rounded-xl border border-blue-500/20 bg-[#111827]/60 p-4 space-y-3">
@@ -2295,12 +2544,14 @@ function renderRadar({
             <path d="M24 12.073c0-6.627-5.372-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" fill="#1877F2"/>
           </svg>
           <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400">Radar Meta Ads</span>
-          {data?.loading && <span className="w-3 h-3 rounded-full border border-t-blue-400 animate-spin border-blue-500/20 inline-block" />}
+          {isLoading && <span className="text-[9px] text-blue-400/60 font-semibold animate-pulse">Carregando...</span>}
+          {treeData && !treeData.loading && !treeData.error && (
+            <span className="text-[9px] text-[#4a4844]">{treeData.account_name}</span>
+          )}
         </div>
-        {/* Pills de período */}
         <div className="flex items-center gap-1 flex-wrap">
           {(["today","yesterday","7d","30d","custom"] as RadarPreset[]).map(p => (
-            <button key={p} onClick={() => onPresetClick(p)}
+            <button key={p} onClick={() => handlePresetClick(p)}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all ${
                 preset === p
                   ? "bg-blue-500 border-blue-400 text-white"
@@ -2315,289 +2566,58 @@ function renderRadar({
       {/* Campos de data personalizada */}
       {showCustom && (
         <div className="flex flex-col sm:flex-row gap-2">
-          <input type="date" value={customFrom} onChange={e => onCustomFromChange(e.target.value)}
+          <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
             className="flex-1 bg-[#1a1917] border border-[#2e2c29] rounded-lg px-3 py-1.5 text-xs text-[#e8e2d8] outline-none focus:border-blue-500/60 transition-colors [color-scheme:dark]"/>
-          <input type="date" value={customTo} onChange={e => onCustomToChange(e.target.value)}
+          <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
             className="flex-1 bg-[#1a1917] border border-[#2e2c29] rounded-lg px-3 py-1.5 text-xs text-[#e8e2d8] outline-none focus:border-blue-500/60 transition-colors [color-scheme:dark]"/>
-          <button onClick={onCustomApply} disabled={!customFrom || !customTo}
+          <button onClick={handleCustomApply} disabled={!customFrom || !customTo}
             className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-[10px] font-bold hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:pointer-events-none whitespace-nowrap">
             Aplicar
           </button>
         </div>
       )}
 
-      {/* Estado de erro */}
-      {data?.error && (
+      {/* Erro */}
+      {treeData?.error && (
         <div className="flex items-center gap-2 py-1">
           <div className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
-          <p className="text-[10px] text-red-400 font-semibold">Erro: {data.error}</p>
+          <p className="text-[10px] text-red-400 font-semibold">Erro: {treeData.error}</p>
         </div>
       )}
 
-      {/* Loading skeleton */}
-      {data?.loading && (
-        <div className="grid grid-cols-3 gap-3 animate-pulse">
-          {[1,2,3].map(i => (
-            <div key={i} className="space-y-1.5">
-              <div className="h-2 w-14 bg-[#2e2c29] rounded" />
-              <div className="h-5 w-20 bg-[#2e2c29] rounded" />
+      {/* Loading skeleton bonito */}
+      {isLoading && !treeData?.error && (
+        <div className="space-y-4 animate-pulse">
+          <div className="grid grid-cols-3 gap-3 pb-3 border-b border-[#2e2c29]">
+            {[1,2,3].map(i => (
+              <div key={i} className="space-y-1.5">
+                <div className="h-2 w-14 bg-[#2e2c29] rounded" />
+                <div className="h-5 w-20 bg-[#2e2c29] rounded" />
+              </div>
+            ))}
+          </div>
+          {[1,2].map(i => (
+            <div key={i} className="rounded-xl border border-[#2e2c29] p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="h-3 w-20 bg-[#2e2c29] rounded" />
+                <div className="flex gap-3">
+                  <div className="h-3 w-16 bg-[#2e2c29] rounded" />
+                  <div className="h-3 w-12 bg-[#2e2c29] rounded" />
+                  <div className="h-3 w-16 bg-[#2e2c29] rounded" />
+                </div>
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Dados: bloco consolidado (nenhum objetivo de lead/msg) */}
-      {hasData && !hasForm && !hasMsg && !hasOther && (
-        <div className="grid grid-cols-3 gap-3">
-          <div className="flex flex-col gap-0.5">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Total</p>
-            <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.spend)}</p>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">CPL Médio</p>
-            <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.cpl)}</p>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Leads</p>
-            <p className="text-sm font-extrabold text-[#e8e2d8]">{data!.total_leads}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Dados: blocos separados por objetivo */}
-      {hasData && (hasForm || hasMsg || hasOther) && (
-        <div className="space-y-2">
-          {/* Totais no topo */}
-          <div className="flex items-center justify-between pb-2 border-b border-[#2e2c29]">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div>
-                <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto Total</p>
-                <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.spend)}</p>
-              </div>
-              {(hasForm || hasMsg) && (
-                <>
-                  <div className="w-px h-8 bg-[#2e2c29]" />
-                  <div>
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">CPL Médio</p>
-                    <p className="text-sm font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.cpl)}</p>
-                  </div>
-                  <div className="w-px h-8 bg-[#2e2c29]" />
-                  <div>
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Total Leads</p>
-                    <p className="text-sm font-extrabold text-[#e8e2d8]">{data!.total_leads}</p>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* ── Comparativo de Verba ──────────────────────────────────────── */}
-          {verbaMeta != null && verbaMeta > 0 && data && !data.loading && !data.error && (
-            (() => {
-              const gasto = data.spend ?? 0;
-              const pct = verbaMeta > 0 ? Math.min((gasto / verbaMeta) * 100, 999) : 0;
-              const restante = verbaMeta - gasto;
-              const cor = pct >= 100
-                ? { bar: "bg-red-500",   text: "text-red-400",   badge: "bg-red-500/10 border-red-500/25" }
-                : pct >= 80
-                ? { bar: "bg-amber-400", text: "text-amber-400", badge: "bg-amber-500/10 border-amber-500/25" }
-                : { bar: "bg-blue-500",  text: "text-blue-400",  badge: "bg-blue-500/10 border-blue-500/20" };
-              return (
-                <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/15 space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-blue-400 flex items-center gap-1">
-                      <Activity size={9} /> Controle de Verba Meta Ads
-                    </span>
-                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${cor.badge} ${cor.text}`}>
-                      {Math.round(pct)}% utilizado
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div>
-                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">Gasto Real</p>
-                      <p className={`text-xs font-extrabold ${cor.text}`}>{symbol} {fmt(gasto)}</p>
-                    </div>
-                    <div className="w-px h-6 bg-[#2e2c29]" />
-                    <div>
-                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">Verba Configurada</p>
-                      <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(verbaMeta)}</p>
-                    </div>
-                    <div className="w-px h-6 bg-[#2e2c29]" />
-                    <div>
-                      <p className="text-[9px] text-[#4a4844] font-bold uppercase tracking-widest">{restante >= 0 ? "Saldo Disponível" : "Excedente"}</p>
-                      <p className={`text-xs font-extrabold ${restante >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {restante >= 0 ? "" : "-"}{symbol} {fmt(Math.abs(restante))}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="relative h-1.5 rounded-full bg-[#2e2c29] overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ${cor.bar}`}
-                      style={{ width: `${Math.min(pct, 100)}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })()
-          )}
-
-          {/* Bloco: Formulário */}
-          {hasForm && (
-            <div className="flex items-center gap-3 rounded-lg bg-blue-500/8 border border-blue-500/15 px-3 py-2.5">
-              <div className="shrink-0">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 uppercase tracking-wide">
-                  Formulário
-                </span>
-              </div>
-              <div className="flex items-center gap-4 flex-1 flex-wrap">
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Leads</p>
-                  <p className="text-xs font-extrabold text-[#e8e2d8]">{fmtInt(data!.form_leads)}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto</p>
-                  <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.form_spend)}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">CPL</p>
-                  <p className="text-xs font-extrabold text-blue-300">{symbol} {fmt(data!.form_cpl)}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Bloco: Mensagens */}
-          {hasMsg && (
-            <div className="flex items-center gap-3 rounded-lg bg-emerald-500/8 border border-emerald-500/15 px-3 py-2.5">
-              <div className="shrink-0">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wide">
-                  Mensagens
-                </span>
-              </div>
-              <div className="flex items-center gap-4 flex-1 flex-wrap">
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Conversas</p>
-                  <p className="text-xs font-extrabold text-[#e8e2d8]">{fmtInt(data!.msg_leads)}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto</p>
-                  <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.msg_spend)}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">CPL</p>
-                  <p className="text-xs font-extrabold text-emerald-300">{symbol} {fmt(data!.msg_cpl)}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Bloco: Outros Objetivos — tráfego, awareness, engajamento, etc. */}
-          {hasOther && (
-            <div className="rounded-lg bg-[#201f1d] border border-[#2e2c29] overflow-hidden">
-              {/* Cabeçalho do bloco */}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-[#2e2c29]">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/25 uppercase tracking-wide">
-                  Outros Objetivos
-                </span>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Gasto</p>
-                    <p className="text-xs font-extrabold text-[#e8e2d8]">{symbol} {fmt(data!.other_spend)}</p>
-                  </div>
-                  {(data!.other_count ?? 0) > 0 && (
-                    <div className="text-right">
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-[#4a4844]">Resultados</p>
-                      <p className="text-xs font-extrabold text-[#e8e2d8]">{fmtInt(data!.other_count)}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {/* Linhas por campanha */}
-              <div className="divide-y divide-[#1a1917]">
-                {(data!.other_campaigns ?? []).map((c, i) => (
-                  <div key={i} className="flex items-center justify-between gap-2 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-semibold text-[#c8c0b4] truncate">{c.name}</p>
-                      <p className="text-[9px] text-[#4a4844] truncate">{c.objective.replace("OUTCOME_", "").replace(/_/g, " ")}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0 text-right">
-                      <div>
-                        <p className="text-[9px] font-bold text-[#4a4844]">{c.result_label}</p>
-                        <p className="text-[10px] font-extrabold text-amber-300">{fmtInt(c.result_count)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-bold text-[#4a4844]">Gasto</p>
-                        <p className="text-[10px] font-extrabold text-[#7a7268]">{symbol} {fmt(c.spend)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Sem dados */}
-      {data && !data.loading && !data.error && data.account_status >= 1 && data.total_leads === 0 && data.spend === 0 && (data.other_spend ?? 0) === 0 && (
-        <p className="text-[10px] text-[#4a4844] italic text-center py-1">Nenhum dado para o período selecionado.</p>
+      {/* Árvore de dados */}
+      {treeData && !treeData.loading && !treeData.error && (
+        <RadarTree treeData={treeData} symbol={symbol} />
       )}
     </div>
   );
 }
-
-// ─── RadarWrapper: componente com estado próprio ──────────────────────────────
-function RadarWrapper({
-  clienteId, accountId, token, data, onFetch, verbaMeta, verbaGls, moedaCliente,
-}: {
-  clienteId: string;
-  accountId: string;
-  token: string | null;
-  data: MetaInsightData;
-  onFetch: (clienteId: string, accountId: string, token: string | null, since: string, until: string) => void;
-  verbaMeta?: number | null;
-  verbaGls?: number | null;
-  moedaCliente?: 'BRL' | 'USD' | null;
-}) {
-  const [preset, setPreset]         = useState<RadarPreset>("7d");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo,   setCustomTo]   = useState("");
-  const [showCustom, setShowCustom] = useState(false);
-
-  // Dispara fetch ao montar e ao mudar preset (exceto custom)
-  useEffect(() => {
-    if (preset === "custom") return;
-    const { since, until } = computeRadarDates(preset);
-    onFetch(clienteId, accountId, token, since, until);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clienteId, preset]);
-
-  const handlePresetClick = (p: RadarPreset) => {
-    setPreset(p);
-    setShowCustom(p === "custom");
-  };
-
-  const handleCustomApply = () => {
-    if (!customFrom || !customTo) return;
-    onFetch(clienteId, accountId, token, customFrom, customTo);
-  };
-
-  return renderRadar({
-    data,
-    preset,
-    customFrom,
-    customTo,
-    showCustom,
-    onPresetClick: handlePresetClick,
-    onCustomFromChange: setCustomFrom,
-    onCustomToChange: setCustomTo,
-    onCustomApply: handleCustomApply,
-    verbaMeta,
-    verbaGls,
-    moedaCliente,
-  });
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // SKELETON LOADER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2730,6 +2750,9 @@ export default function Home() {
     loading: boolean;
     error?: string;
   }>>({});
+
+  // ── Árvore Radar Meta (Campaigns → AdSets → Ads) ──────────────────────────
+  const [metaTree, setMetaTree] = useState<Record<string, MetaTreeData>>({});
   const [viewMode, setViewMode]         = useState<ViewMode>("grid");
   const [sortMode, setSortMode]         = useState<SortMode>("personalizada");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -2954,8 +2977,24 @@ export default function Home() {
     const _fmtL=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; const _y=new Date(); _y.setDate(_y.getDate()-1); const _f=new Date(_y); _f.setDate(_f.getDate()-6);
     setDateFrom(_fmtL(_f)); setDateTo(_fmtL(_y)); setPeriodPreset("7d"); setCurrentPage(1);
     fetchLeads(cliente.id);
+    // Dispara árvore Radar ao entrar no cliente
+    if (cliente.meta_ad_account_id) {
+      const { since, until } = computeRadarDates("7d");
+      fetchMetaTree(cliente.id, cliente.meta_ad_account_id, cliente.meta_access_token ?? null, since, until);
+    }
+    // Auto-sync silencioso de leads Meta
+    if (cliente.meta_ad_account_id && operacaoAtiva) {
+      syncMetaLeads(
+        cliente.id,
+        cliente.meta_ad_account_id,
+        cliente.meta_access_token ?? null,
+        operacaoAtiva.id,
+        operacaoAtiva.nome,
+      );
+    }
     window.scrollTo({ top: 0, behavior: "smooth" }); // Sobe suavemente
-  }, [fetchLeads]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchLeads, operacaoAtiva]);
 
   const handleLeadsParsed = useCallback(async (parsedLeads: Lead[]) => {
     if (!clienteAtivo||!operacaoAtiva) return;
@@ -3128,7 +3167,85 @@ export default function Home() {
     }
   };
 
-  const handleDragEnd = useCallback(async (result: { source:{index:number}; destination:{index:number}|null }) => {
+  // ── Busca árvore Radar Meta Ads (Campaigns → AdSets → Ads) ──────────────
+  const fetchMetaTree = async (
+    clienteId: string,
+    accountId: string,
+    token: string | null,
+    since?: string,
+    until?: string,
+  ) => {
+    setMetaTree(prev => ({ ...prev, [clienteId]: { account_status: 0, account_name: "", currency: "BRL", groups: [], loading: true } }));
+    try {
+      const params = new URLSearchParams({ action: "tree", account_id: accountId });
+      if (token) params.set("token", token);
+      if (since && until) { params.set("since", since); params.set("until", until); } else {
+        const today = new Date(); const from = new Date(today); from.setDate(today.getDate() - 6);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+        params.set("since", fmt(from)); params.set("until", fmt(today));
+      }
+      const res  = await fetch(`/api/meta?${params}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      setMetaTree(prev => ({ ...prev, [clienteId]: { ...json, loading: false } }));
+    } catch (err: unknown) {
+      setMetaTree(prev => ({ ...prev, [clienteId]: { account_status: -1, account_name: "", currency: "BRL", groups: [], loading: false, error: (err as Error).message } }));
+    }
+  };
+
+  // ── Auto-Sync: busca leads Meta e faz upsert no Supabase ─────────────────
+  const syncMetaLeads = async (
+    clienteId: string,
+    accountId: string,
+    token: string | null,
+    operacaoId: string,
+    operacaoNome: string,
+  ) => {
+    try {
+      const params = new URLSearchParams({ action: "leads", account_id: accountId });
+      if (token) params.set("token", token);
+      const res  = await fetch(`/api/meta?${params}`);
+      const json = await res.json();
+      if (json.error || !json.leads?.length) return;
+
+      // Busca meta_lead_ids já existentes para este cliente
+      const { data: existing } = await supabase
+        .from("leads")
+        .select("meta_lead_id")
+        .eq("cliente", clienteId)
+        .not("meta_lead_id", "is", null);
+
+      const existingIds = new Set((existing ?? []).map((r: { meta_lead_id: string }) => r.meta_lead_id));
+
+      const novos = (json.leads as {
+        meta_lead_id: string; nome: string; email: string;
+        telefone: string; created_time: string;
+      }[]).filter(l => !existingIds.has(l.meta_lead_id));
+
+      if (!novos.length) return;
+
+      const rows = novos.map(l => ({
+        meta_lead_id: l.meta_lead_id,
+        nome:         l.nome || null,
+        email:        l.email || null,
+        telefone:     l.telefone || null,
+        data:         l.created_time ? l.created_time.slice(0, 10) : null,
+        plataforma:   "Meta Ads",
+        cliente:      clienteId,
+        operacao:     operacaoNome,
+        operacao_id:  operacaoId,
+      }));
+
+      const { data: inserted, error } = await supabase.from("leads").insert(rows).select();
+      if (error) throw error;
+      if (inserted?.length) {
+        setAllLeadsForDashboard(prev => [...((inserted as Lead[]) ?? []), ...prev]);
+        toast.success(`✅ ${inserted.length} lead(s) Meta sincronizado(s) automaticamente.`);
+      }
+    } catch {
+      // Silencioso — auto-sync não deve bloquear a UX
+    }
+  };
     if (!result.destination) return;
     const { source, destination } = result;
     if (source.index===destination.index) return;
@@ -3922,10 +4039,8 @@ export default function Home() {
                 clienteId={clienteAtivo.id}
                 accountId={clienteAtivo.meta_ad_account_id}
                 token={clienteAtivo.meta_access_token ?? null}
-                data={metaInsights[clienteAtivo.id] ?? null}
-                onFetch={fetchMetaInsights}
-                verbaMeta={clienteAtivo.verba_meta_ads ?? null}
-                verbaGls={clienteAtivo.verba_gls ?? null}
+                treeData={metaTree[clienteAtivo.id] ?? null}
+                onFetch={fetchMetaTree}
                 moedaCliente={clienteAtivo.moeda ?? null}
               />
             )}
