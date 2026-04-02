@@ -291,6 +291,7 @@ export async function GET(req: NextRequest) {
           insightRaw = await metaFetch(`/${camp.id}/insights`, {
             access_token: token,
             fields: "spend,actions,cost_per_action_type,date_start,date_stop",
+            action_report_time: "conversion",
             ...insightParams,
           });
         } catch (e) { insightRaw = { error: String(e) }; }
@@ -336,6 +337,9 @@ export async function GET(req: NextRequest) {
           const iData = await metaFetch(`/${nodeId}/insights`, {
             access_token: token,
             fields: "spend,actions,cost_per_action_type",
+            // action_report_time=conversion: mesmo método de atribuição do Meta Ads Manager
+            // Isso garante que os números batem com a coluna "Resultados" do Manager
+            action_report_time: "conversion",
             ...insightParams,
           });
           const row = (iData.data ?? [])[0] as Record<string, unknown> | undefined ?? {};
