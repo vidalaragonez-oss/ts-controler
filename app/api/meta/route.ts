@@ -81,17 +81,20 @@ function extractInsights(
   let matchedType = "";
 
   if (objective === "OUTCOME_LEADS" || objective === "LEAD_GENERATION") {
-    // Para campanhas de Leads: coleta AMBOS os buckets independentemente.
-    // Dados brutos confirmados: lead_grouped=4 e messaging_conversation_started_7d=14
-    // coexistem — o sistema antigo parava no lead_grouped e ignorava as mensagens.
-    const form = getActionValue(actions, FORM_LEAD_TYPES);
+    // A Meta registra o mesmo resultado em múltiplos action_types simultâneos.
+    // Ex: campanha WhatsApp retorna lead_grouped=4 E messaging_started=14.
+    // Esses NÃO são aditivos — são representações do mesmo funil.
+    // Regra: se houver mensagens, usar APENAS mensagens (objetivo da campanha).
+    // Se não houver mensagens, usar formulários.
     const msg  = getActionValue(actions, MSG_LEAD_TYPES);
-    formLeads = form.value;
-    msgLeads  = msg.value;
-    // matchedType = o que tiver mais resultados (para CPR)
-    if (msgLeads >= formLeads && msgLeads > 0) {
+    const form = getActionValue(actions, FORM_LEAD_TYPES);
+    if (msg.value > 0) {
+      // Campanha WhatsApp/Direct/Messenger sob objetivo Leads
+      msgLeads    = msg.value;
       matchedType = msg.type;
-    } else if (formLeads > 0) {
+    } else if (form.value > 0) {
+      // Campanha de formulário nativo
+      formLeads   = form.value;
       matchedType = form.type;
     }
   } else if (objective === "MESSAGES" || objective === "OUTCOME_ENGAGEMENT") {
