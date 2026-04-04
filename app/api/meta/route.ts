@@ -40,8 +40,8 @@ const OBJECTIVE_LABEL: Record<string, string> = {
 };
 
 const OBJECTIVE_ACTION_MAP: Record<string, string[]> = {
-  // A ordem aqui é vital: busca o formulário nativo primeiro. Se achar, ignora o resto.
-  OUTCOME_LEADS:      ["leadgen_grouped", "onsite_conversion.lead_grouped", "lead"],
+  // PRIORIDADE 1: Formulário Nativo. Se achar, ignora o genérico.
+  OUTCOME_LEADS:      ["onsite_conversion.lead_grouped", "leadgen", "leadgen_grouped", "lead"],
   OUTCOME_ENGAGEMENT: ["post_engagement"],
   MESSAGES:           ["onsite_conversion.messaging_conversation_started_7d"],
   OUTCOME_TRAFFIC:    ["link_click"],
@@ -59,22 +59,19 @@ function extractInsights(
       const found = actions.find(a => a.action_type === targetType);
       if (found && parseInt(found.value ?? "0", 10) > 0) {
         results = parseInt(found.value, 10);
-        matchedType = targetType; // Salva quem venceu a busca
-        break; // PARA A BUSCA IMEDIATAMENTE (Evita sobreposição)
+        matchedType = targetType; // Grava quem venceu para usar no CPR
+        break;
       }
     }
   }
   let cpr = 0;
-  // Busca o custo EXATAMENTE para o evento que venceu nos resultados
   if (matchedType) {
-    const foundCpa = cpaList.find(c => c.action_type === matchedType);
-    if (foundCpa && parseFloat(foundCpa.value ?? "0") > 0) {
-      cpr = parseFloat(foundCpa.value);
+    const found = cpaList.find(c => c.action_type === matchedType);
+    if (found && parseFloat(found.value ?? "0") > 0) {
+      cpr = parseFloat(found.value);
     }
   }
-  // Fallback de matemática
   if (cpr === 0 && results > 0) cpr = spend / results;
-
   return { spend, results, cpr };
 }
 
@@ -287,7 +284,6 @@ export async function GET(req: NextRequest) {
           insightRaw = await metaFetch(`/${camp.id}/insights`, {
             access_token: token,
             fields: "spend,actions,cost_per_action_type,date_start,date_stop",
-            action_report_time: "conversion",
             ...insightParams,
           });
         } catch (e) { insightRaw = { error: String(e) }; }
@@ -319,29 +315,13 @@ export async function GET(req: NextRequest) {
         access_token: token, fields: "account_status,name,currency",
       });
 
-      // Alinhado com o projeto de referência:
-      // Para presets padrão usa date_preset (last_7d, last_30d, etc)
-      // Só usa time_range quando o usuário escolhe datas customizadas
-      // Isso garante que os números batem com o Meta Ads Manager
-      const preset = searchParams.get("preset"); // "today"|"yesterday"|"7d"|"30d"
-      let insightParams: Record<string, string>;
-      if (preset === "today") {
-        const today = new Date().toISOString().slice(0, 10);
-        insightParams = { time_range: JSON.stringify({ since: today, until: today }) };
-      } else if (preset === "yesterday") {
-        const y = new Date(); y.setDate(y.getDate() - 1);
-        const yStr = y.toISOString().slice(0, 10);
-        insightParams = { time_range: JSON.stringify({ since: yStr, until: yStr }) };
-      } else if (preset === "7d") {
-        insightParams = { date_preset: "last_7d" };
-      } else if (preset === "30d") {
-        insightParams = { date_preset: "last_30d" };
-      } else if (since && until) {
-        // Custom range
-        insightParams = { time_range: JSON.stringify({ since, until }) };
-      } else {
-        insightParams = { date_preset: "last_7d" };
-      }
+      // IMPORTANTE: A Meta API ignora time_range/date_preset em insights inline (insights{...}).
+      // O filtro de período deve ser passado como parâmetro separado na query de insights.
+      // Por isso buscamos campanhas sem filtro de período, e depois buscamos insights
+      // separadamente usando /{id}/insights com o parâmetro correto.
+      const insightParams: Record<string, string> = since && until
+        ? { time_range: JSON.stringify({ since, until }) }
+        : { date_preset: "last_7d" };
 
       // Helper: busca insights de um nó (campanha, adset, ad) com período correto
       async function fetchNodeInsights(nodeId: string): Promise<{ actions: ActionEntry[]; cpaList: ActionEntry[]; spend: number }> {
