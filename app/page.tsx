@@ -1677,11 +1677,15 @@ function ClientCard({ client, onSelect, onEdit, onDeactivate, onDelete, onToggle
       </div>
 
       {/* Row 3 — MetaGoalBar ancorada acima do rodapé (só aparece se tiver meta) */}
-      {temMeta && (
-        <div className="shrink-0 mt-1">
-          <MetaGoalBar meta={client.meta_leads_mensal!} leadsDoMes={leadsDoMes ?? 0} />
-        </div>
-      )}
+      {temMeta && (() => {
+        const apiLeads = metaData?.total_leads ?? 0;
+        const totalResultados = Math.max(leadsDoMes ?? 0, apiLeads);
+        return (
+          <div className="shrink-0 mt-1">
+            <MetaGoalBar meta={client.meta_leads_mensal!} leadsDoMes={totalResultados} />
+          </div>
+        );
+      })()}
 
       {/* Row 4 — Gestores + Data (sempre no rodapé) */}
       <div className="flex items-center gap-2 flex-wrap border-t border-[#2e2c29]/50 pt-2 mt-2 shrink-0">
@@ -3164,10 +3168,9 @@ export default function Home() {
         params.set("since", since);
         params.set("until", until);
       } else {
-        // Padrão dos badges externos: últimos 7 dias
+        // Padrão: mês vigente (do dia 1 até hoje) — garante pacing correto
         const today = new Date();
-        const from  = new Date(today);
-        from.setDate(today.getDate() - 6);
+        const from  = new Date(today.getFullYear(), today.getMonth(), 1);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
         params.set("since", fmt(from));
         params.set("until", fmt(today));
@@ -3992,11 +3995,12 @@ export default function Home() {
 
                   {/* ── Barra de Meta Mensal no detalhe (base D-1) ── */}
                   {clienteAtivo.meta_leads_mensal != null && clienteAtivo.meta_leads_mensal > 0 && (() => {
-                    // Usa apenas o valor do batch (D-1), consistente com o pacing dos cards
                     const leadsDoMes = leadsDoMesPorCliente[clienteAtivo.id] ?? 0;
+                    const apiLeads = metaInsights[clienteAtivo.id]?.total_leads ?? 0;
+                    const totalResultados = Math.max(leadsDoMes, apiLeads);
                     return (
                       <div className="mt-1">
-                        <MetaGoalBar meta={clienteAtivo.meta_leads_mensal} leadsDoMes={leadsDoMes} />
+                        <MetaGoalBar meta={clienteAtivo.meta_leads_mensal} leadsDoMes={totalResultados} />
                       </div>
                     );
                   })()}
