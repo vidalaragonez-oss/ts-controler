@@ -1450,34 +1450,30 @@ function MetaSummary({ data }: { data: MetaInsightData }) {
   const fmtInt = (v: number) => v.toLocaleString("pt-BR");
   const symbol = (data.currency ?? "BRL") === "USD" ? "US$" : "R$";
 
-  // Só soma form + msg — gasto total "de negócio"
-  const bizLeads = (data.form_leads ?? 0) + (data.msg_leads ?? 0);
-  const bizSpend = (data.form_spend ?? 0) + (data.msg_spend ?? 0);
-  const bizCpl   = bizLeads > 0 ? bizSpend / bizLeads : 0;
+  // Soma leads e mensagens diretamente das chaves raiz do backend
+  const bizLeads = (data.leads ?? 0) + (data.messages ?? 0);
+  const bizCpl   = bizLeads > 0 ? data.spend / bizLeads : 0;
 
   // Se não houve nenhum gasto relevante, não mostra nada
-  if (bizSpend === 0 && data.spend === 0) return null;
-
-  // Gasto exibido: gasto de negócio se existir, caso contrário total (ex: só "outros")
-  const displaySpend = bizSpend > 0 ? bizSpend : data.spend;
+  if (data.spend === 0) return null;
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap mt-1">
       {/* Gasto */}
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#201f1d] border border-[#2e2c29] text-[#7a7268]">
         <Activity size={9} className="text-[#4a4844]" />
-        {symbol} {fmt(displaySpend)}
+        {symbol} {fmt(data.spend)}
       </span>
 
-      {/* Leads — só aparece se houver leads reais */}
+      {/* Resultados — só aparece se houver leads/msg reais */}
       {bizLeads > 0 && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/8 border border-blue-500/25 text-blue-400">
           <Target size={9} />
-          {fmtInt(bizLeads)} leads
+          {fmtInt(bizLeads)} leads/msg
         </span>
       )}
 
-      {/* CPL — só aparece se houver leads */}
+      {/* CPL — só aparece se houver resultados */}
       {bizLeads > 0 && (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/8 border border-emerald-500/25 text-emerald-400">
           <Zap size={9} />
