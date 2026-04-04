@@ -78,7 +78,7 @@ interface GestorPerfil {
 // Augmenta o tipo Cliente importado para incluir o novo campo
 type ClienteComAlerta = Cliente & { alerta_pagamento?: boolean };
 
-type PeriodPreset = "7d" | "15d" | "30d" | "90d" | "custom" | "max";
+type PeriodPreset = "7d" | "15d" | "30d" | "90d" | "this_month" | "custom" | "max";
 type ViewMode    = "grid" | "list";
 type SortMode   = "alfabetica" | "personalizada";
 
@@ -2273,7 +2273,7 @@ function EditClienteModal({
 // RADAR META ADS — Painel inline no cliente ativo, filtro independente
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type RadarPreset = "today" | "yesterday" | "7d" | "30d" | "custom";
+type RadarPreset = "today" | "yesterday" | "7d" | "30d" | "this_month" | "custom";
 
 function computeRadarDates(preset: RadarPreset): { since: string; until: string } {
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
@@ -2294,11 +2294,15 @@ function computeRadarDates(preset: RadarPreset): { since: string; until: string 
     const from = new Date(yesterday); from.setDate(yesterday.getDate() - 29);
     return { since: fmt(from), until: fmt(yesterday) };
   }
+  if (preset === "this_month") {
+    const from = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { since: fmt(from), until: fmt(today) };
+  }
   return { since: fmt(yesterday), until: fmt(yesterday) };
 }
 
 const RADAR_PRESET_LABELS: Record<RadarPreset, string> = {
-  today: "Hoje", yesterday: "Ontem", "7d": "7 dias", "30d": "30 dias", custom: "Custom",
+  today: "Hoje", yesterday: "Ontem", "7d": "7 dias", "30d": "30 dias", this_month: "Este Mês", custom: "Custom",
 };
 
 // ─── Status badge helper ──────────────────────────────────────────────────────
@@ -2612,7 +2616,7 @@ function RadarWrapper({
           )}
         </div>
         <div className="flex items-center gap-1 flex-wrap">
-          {(["today","yesterday","7d","30d","custom"] as RadarPreset[]).map(p => (
+          {(["today","yesterday","7d","30d","this_month","custom"] as RadarPreset[]).map(p => (
             <button key={p} onClick={() => { setPreset(p); setShowCustom(p === "custom"); doFetch(p); }}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all ${
                 preset === p
@@ -3399,7 +3403,7 @@ export default function Home() {
     try {
       const params = new URLSearchParams({ action: "tree", account_id: accountId });
       if (token) params.set("token", token);
-      if (preset && ["today","yesterday","7d","30d"].includes(preset)) {
+      if (preset && ["today","yesterday","7d","30d","this_month"].includes(preset)) {
         // Passa o preset diretamente — o route usa date_preset nativo do Meta
         params.set("preset", preset);
         // Mantém since/until para exibição no UI
@@ -4420,7 +4424,7 @@ export default function Home() {
                 <div className="flex flex-wrap gap-2">
                   {([
                     {key:"7d",label:"7d"},{key:"15d",label:"15d"},{key:"30d",label:"30d"},
-                    {key:"90d",label:"90d"},{key:"custom",label:"Personalizado"},{key:"max",label:"Máximo"},
+                    {key:"90d",label:"90d"},{key:"this_month",label:"Este Mês"},{key:"custom",label:"Personalizado"},{key:"max",label:"Máximo"},
                   ] as {key:PeriodPreset;label:string}[]).map(p=>(
                     <button key={p.key}
                       onClick={()=>{
@@ -4428,6 +4432,11 @@ export default function Home() {
                         if (p.key!=="custom") {
                           const fmt=(d:Date)=>d.toISOString().slice(0,10);
                           if (p.key==="max"){setDateFrom("");setDateTo("");}
+                          else if (p.key==="this_month") {
+                            const today = new Date();
+                            const from = new Date(today.getFullYear(), today.getMonth(), 1);
+                            setDateFrom(fmt(from)); setDateTo(fmt(today));
+                          }
                           else{
                             // Ontem como data final — exclui o dia de hoje (dados incompletos)
                             const yesterday=new Date(); yesterday.setDate(yesterday.getDate()-1);
