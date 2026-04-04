@@ -40,13 +40,12 @@ const OBJECTIVE_LABEL: Record<string, string> = {
 };
 
 const OBJECTIVE_ACTION_MAP: Record<string, string[]> = {
-  // Leads: Busca o formulário nativo primeiro.
   OUTCOME_LEADS:      ["onsite_conversion.lead_grouped", "leadgen", "leadgen_grouped", "lead"],
-  // Engajamento: Busca mensagens primeiro, depois engajamento genérico.
   OUTCOME_ENGAGEMENT: ["onsite_conversion.messaging_conversation_started_7d", "post_engagement"],
   MESSAGES:           ["onsite_conversion.messaging_conversation_started_7d"],
   OUTCOME_TRAFFIC:    ["link_click"],
-  OUTCOME_SALES:      ["purchase", "omni_purchase"],
+  // Adicionado o evento de mensagens para campanhas de Venda no WhatsApp
+  OUTCOME_SALES:      ["purchase", "omni_purchase", "onsite_conversion.messaging_conversation_started_7d"],
 };
 
 function extractInsights(
@@ -445,7 +444,8 @@ export async function GET(req: NextRequest) {
           if (["onsite_conversion.lead_grouped", "leadgen", "leadgen_grouped", "lead"].includes(ins.matchedType || "")) {
             campFormLeads = ins.results;
           }
-          if (ins.matchedType === "onsite_conversion.messaging_conversation_started_7d") {
+          // Soma mensagens E compras como 'resultados de negócio' para a meta
+          if (["onsite_conversion.messaging_conversation_started_7d", "purchase", "omni_purchase"].includes(ins.matchedType || "")) {
             campMsgLeads = ins.results;
           }
           totalFormLeads += campFormLeads; totalMsgLeads += campMsgLeads;
