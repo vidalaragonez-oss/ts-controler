@@ -40,9 +40,10 @@ const OBJECTIVE_LABEL: Record<string, string> = {
 };
 
 const OBJECTIVE_ACTION_MAP: Record<string, string[]> = {
-  // PRIORIDADE 1: Formulário Nativo. Se achar, ignora o genérico.
+  // Leads: Busca o formulário nativo primeiro.
   OUTCOME_LEADS:      ["onsite_conversion.lead_grouped", "leadgen", "leadgen_grouped", "lead"],
-  OUTCOME_ENGAGEMENT: ["post_engagement"],
+  // Engajamento: Busca mensagens primeiro, depois engajamento genérico.
+  OUTCOME_ENGAGEMENT: ["onsite_conversion.messaging_conversation_started_7d", "post_engagement"],
   MESSAGES:           ["onsite_conversion.messaging_conversation_started_7d"],
   OUTCOME_TRAFFIC:    ["link_click"],
   OUTCOME_SALES:      ["purchase", "omni_purchase"],
@@ -51,24 +52,36 @@ const OBJECTIVE_ACTION_MAP: Record<string, string[]> = {
 function extractInsights(
   actions: ActionEntry[], cpaList: ActionEntry[], spend: number, objective = "UNKNOWN",
 ): AdInsights {
-  const targetTypes = OBJECTIVE_ACTION_MAP[objective];
   let results = 0;
   let matchedType = "";
-  if (targetTypes) {
-    for (const targetType of targetTypes) {
-      const found = actions.find(a => a.action_type === targetType);
-      if (found && parseInt(found.value ?? "0", 10) > 0) {
-        results = parseInt(found.value, 10);
-        matchedType = targetType; // Grava quem venceu para usar no CPR
-        break;
+  if (objective === "OUTCOME_LEADS" || objective === "LEAD_GENERATION") {
+    const leadActions = actions.filter(a => a.action_type.includes("lead"));
+    if (leadActions.length > 0) {
+      const specific = leadActions.find(a => a.action_type !== "lead");
+      const winner = specific || leadActions.find(a => a.action_type === "lead");
+      if (winner) {
+        results = parseInt(winner.value ?? "0", 10);
+        matchedType = winner.action_type;
+      }
+    }
+  } else {
+    const targetTypes = OBJECTIVE_ACTION_MAP[objective];
+    if (targetTypes) {
+      for (const targetType of targetTypes) {
+        const found = actions.find(a => a.action_type === targetType);
+        if (found && parseInt(found.value ?? "0", 10) > 0) {
+          results = parseInt(found.value, 10);
+          matchedType = targetType;
+          break;
+        }
       }
     }
   }
   let cpr = 0;
   if (matchedType) {
-    const found = cpaList.find(c => c.action_type === matchedType);
-    if (found && parseFloat(found.value ?? "0") > 0) {
-      cpr = parseFloat(found.value);
+    const foundCpa = cpaList.find(c => c.action_type === matchedType);
+    if (foundCpa && parseFloat(foundCpa.value ?? "0") > 0) {
+      cpr = parseFloat(foundCpa.value);
     }
   }
   if (cpr === 0 && results > 0) cpr = spend / results;
