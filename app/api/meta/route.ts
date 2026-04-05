@@ -321,11 +321,35 @@ export async function GET(req: NextRequest) {
     }
 
 
+    // ── Listagem de Campanhas (para Blacklist UI) ─────────────────────────────
+    if (action === "campaign_list") {
+      const accountId = searchParams.get("account_id");
+      if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
+
+      const data = await metaFetch(`/${accountId}/campaigns`, {
+        access_token: token,
+        fields: "id,name,status,objective",
+        limit: "500",
+      });
+
+      const campaigns = ((data.data ?? []) as Record<string, unknown>[]).map(c => ({
+        id:        c.id        as string,
+        name:      c.name      as string,
+        status:    c.status    as string,
+        objective: (c.objective as string) ?? "UNKNOWN",
+      }));
+
+      return NextResponse.json({ campaigns });
+    }
+
     // ── Árvore Radar ───────────────────────────────────────────────────────────
     if (action === "tree") {
       const accountId = searchParams.get("account_id");
       const since     = searchParams.get("since");
       const until     = searchParams.get("until");
+      // IDs de campanhas a ignorar (blacklist) — passados como JSON array no query param
+      const ignoreRaw = searchParams.get("ignore_ids");
+      const ignoredIds: string[] = ignoreRaw ? JSON.parse(ignoreRaw) : [];
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
       const accountData = await metaFetch(`/${accountId}`, {
@@ -373,6 +397,9 @@ export async function GET(req: NextRequest) {
         const campId    = camp.id as string;
         const objective = (camp.objective as string) ?? "UNKNOWN";
         const status    = (camp.status as string) ?? "UNKNOWN";
+
+        // Blacklist: ignora campanhas selecionadas pelo gestor
+        if (ignoredIds.includes(campId)) continue;
 
         // Busca insights da campanha com período correto (endpoint separado)
         const campIns = await fetchNodeInsights(campId);
@@ -463,6 +490,9 @@ export async function GET(req: NextRequest) {
       const accountId = searchParams.get("account_id");
       const since = searchParams.get("since");
       const until = searchParams.get("until");
+      // IDs de campanhas a ignorar (blacklist)
+      const ignoreRaw = searchParams.get("ignore_ids");
+      const ignoredIds: string[] = ignoreRaw ? JSON.parse(ignoreRaw) : [];
       if (!accountId) return NextResponse.json({ error: "account_id obrigatório" }, { status: 400 });
 
       const accountData = await metaFetch(`/${accountId}`, { access_token: token, fields: "account_status,name,currency" });
@@ -495,6 +525,8 @@ export async function GET(req: NextRequest) {
         const insightData = await metaFetch(`/${accountId}/insights`, iParams);
         for (const row of (insightData.data ?? []) as Record<string, unknown>[]) {
           const campId = (row.campaign_id as string) ?? "";
+          // Blacklist: ignora campanhas selecionadas pelo gestor
+          if (ignoredIds.includes(campId)) continue;
           const campSpend = parseFloat((row.spend as string) ?? "0");
           totalSpend += campSpend;
           const objective = objectiveMap.get(campId) ?? "UNKNOWN";
