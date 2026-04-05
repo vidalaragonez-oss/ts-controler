@@ -2857,6 +2857,8 @@ function normalizeCliente(raw: Record<string, unknown>): Cliente {
       : typeof raw.meta_ignored_campaigns === "string" && raw.meta_ignored_campaigns.trim()
         ? JSON.parse(raw.meta_ignored_campaigns)
         : null,
+    // Input Express: gasto manual de Google/GLS/outras redes sem API
+    gasto_manual_outras_redes: raw.gasto_manual_outras_redes != null ? Number(raw.gasto_manual_outras_redes) : null,
   } as Cliente;
 }
 
@@ -3070,7 +3072,7 @@ export default function Home() {
     try {
       const { data, error } = await supabase
         .from("clientes")
-        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls, verba_outros, gls_account_id, moeda, meta_spend_cache, meta_leads_cache, meta_cpl_cache, meta_last_sync, meta_ignored_campaigns")
+        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls, verba_outros, gls_account_id, moeda, meta_spend_cache, meta_leads_cache, meta_cpl_cache, meta_last_sync, meta_ignored_campaigns, gasto_manual_outras_redes")
         .eq("operacao_id",operacaoId)
         .order("ordem",{ascending:true,nullsFirst:false})
         .order("created_at",{ascending:false});
