@@ -285,8 +285,21 @@ export async function GET(req: NextRequest) {
       const accountPageIds = await discoverPageIds(accountId, token);
 
       if (accountPageIds.size === 0) {
-        console.warn(`[leads] Nenhum page_id encontrado para ${accountId}`);
-        return NextResponse.json({ leads: [], pages_scanned: 0, warning: "Nenhuma página vinculada encontrada para esta conta de anúncios." });
+        // Fallback: busca leadgen_forms diretamente da conta de anúncios
+        // Funciona para contas com Business Manager restrito ou sem page_id nas campanhas
+        console.warn(`[leads] Nenhum page_id encontrado para ${accountId} — tentando busca direta`);
+        try {
+          const formsData = await metaFetch(`/${accountId}/leadgen_forms`, {
+            access_token: token, fields: "id,name,status", limit: "100",
+          });
+          const forms = (formsData.data ?? []) as { id: string; name: string }[];
+          for (const form of forms) {
+            try { await fetchLeadsForForm(form.id, form.name, token); } catch { /* segue */ }
+          }
+        } catch (e) {
+          console.error(`[leads] fallback direto falhou: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        return NextResponse.json({ leads, pages_scanned: 0, warning: leads.length === 0 ? "Nenhuma página vinculada encontrada." : undefined });
       }
 
       // PASSO 2: Mapeia page_id → page_access_token (necessário para leadgen_forms)
