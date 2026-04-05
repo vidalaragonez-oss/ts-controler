@@ -2882,14 +2882,13 @@ function OperacaoContent() {
   const [clienteModal, setClienteModal]       = useState<{ mode:"new"|"edit"; client?: Cliente; initialTab?: "perfil"|"campanhas"|"financeiro"|"integracoes" } | null>(null);
   const [editModal, setEditModal]             = useState<Cliente | null>(null);
 
-  // ── Leads do Mês por Cliente (para barra de meta) ──────────────────────────
-  const [leadsDoMesPorCliente, setLeadsDoMesPorCliente] = useState<Record<string, number>>({});
-
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [currentPage, setCurrentPage]   = useState(1);
   const [newLeadOpen, setNewLeadOpen]   = useState(false);
   // Dashboard: dataset completo (sem paginação) para cálculos de métricas
   const [allLeadsForDashboard, setAllLeadsForDashboard] = useState<Lead[]>([]);
+  // Contagem de leads do mês por cliente — usada nos cards do grid
+  const [leadsDoMesPorCliente, setLeadsDoMesPorCliente] = useState<Record<string, number>>({});
   const [leadSearch, setLeadSearch]     = useState("");
   const [platFilter, setPlatFilter]     = useState("");
   const _initDates = (() => { const fmt=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; const y=new Date(); y.setDate(y.getDate()-1); const f=new Date(y); f.setDate(f.getDate()-6); return {from:fmt(f),to:fmt(y)}; })();
@@ -3087,7 +3086,6 @@ function OperacaoContent() {
       setClientes(rows);
       // Busca leads do mês atual por cliente (para barra de meta — banco local)
       // fetchMetaInsights removido do carregamento automático: os cards agora usam
-      // meta_*_cache (preenchido pelo cron). Chamada só ocorre ao entrar num cliente.
       fetchLeadsDoMesBatch(rows.map(r => r.id));
     } catch (err: unknown) {
       toast.error(`Erro ao carregar clientes: ${err instanceof Error ? err.message : "Erro desconhecido"}`);
@@ -3097,19 +3095,15 @@ function OperacaoContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Busca contagem de leads do mês atual para cada cliente (base D-1 — pacing)
+  // Busca contagem de leads do mês atual para cada cliente (base D-1 — pacing dos cards)
   const fetchLeadsDoMesBatch = useCallback(async (clienteIds: string[]) => {
     if (!clienteIds.length) return;
     try {
       const now     = new Date();
       const ano     = now.getFullYear();
-      const mes     = now.getMonth(); // 0-based
-
-      // Início do mês vigente
+      const mes     = now.getMonth();
       const mesInicio = new Date(ano, mes, 1).toISOString().slice(0, 10);
-      // Fim do mês vigente (para capturar todos os leads do mês corrente)
-      const mesFim = new Date(ano, mes + 1, 0).toISOString().slice(0, 10);
-
+      const mesFim    = new Date(ano, mes + 1, 0).toISOString().slice(0, 10);
       const { data, error } = await supabase
         .from("leads")
         .select("cliente, data, plataforma, meta_lead_id")
@@ -3120,11 +3114,8 @@ function OperacaoContent() {
       const counts: Record<string, number> = {};
       for (const row of (data ?? []) as { cliente: string; data: string; plataforma: string; meta_lead_id: string | null }[]) {
         if (!row.cliente) continue;
-        // DNA de Lead: Meta → apenas messaging_first_reply ou lead (via meta_lead_id presente)
-        // Manual/CSV → conta sempre
         const plat = (row.plataforma ?? "").toLowerCase();
-        const isMeta = plat.includes("meta");
-        if (isMeta && !row.meta_lead_id) continue; // Meta orgânico sem ID → ignora
+        if (plat.includes("meta") && !row.meta_lead_id) continue;
         counts[row.cliente] = (counts[row.cliente] ?? 0) + 1;
       }
       setLeadsDoMesPorCliente(counts);
@@ -4212,18 +4203,15 @@ function OperacaoContent() {
 
                   {/* ── Barra de Meta Mensal no detalhe (real-time via allLeadsForDashboard) ── */}
                   {clienteAtivo.meta_leads_mensal != null && clienteAtivo.meta_leads_mensal > 0 && (() => {
-                    const now = new Date();
-                    const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1);
-                    const mesFim    = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-                    mesFim.setHours(23, 59, 59, 999);
-                    // Conta apenas leads do mês corrente com DNA de lead válido
+                    const now    = new Date();
+                    const inicio = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                    const fim    = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+                    // Mesma lógica do useMemo leadsDoMesPorCliente: comparação ISO string, sem timezone drift
                     const leadsDoMesRealTime = allLeadsForDashboard.filter(l => {
-                      const d = parseDMY(l.data ?? "");
-                      if (!d || d < mesInicio || d > mesFim) return false;
+                      if (!l.data || l.data < inicio || l.data > fim) return false;
                       const plat = (l.plataforma ?? "").toLowerCase();
-                      const isMeta = plat.includes("meta");
-                      // Meta: apenas leads com meta_lead_id (messaging_first_reply/lead)
-                      if (isMeta && !l.meta_lead_id) return false;
+                      // Meta Ads: só conta leads com meta_lead_id (form / messaging)
+                      if (plat.includes("meta") && !l.meta_lead_id) return false;
                       return true;
                     }).length;
                     return (
