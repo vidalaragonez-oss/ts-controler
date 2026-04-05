@@ -3152,8 +3152,11 @@ function OperacaoContent() {
   const handleSelectCliente = useCallback((cliente: Cliente) => {
     scrollPosRef.current = window.scrollY; // Salva a posição
     setClienteAtivo(cliente); setLeadSearch(""); setPlatFilter("");
-    const _fmtL=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; const _y=new Date(); _y.setDate(_y.getDate()-1); const _f=new Date(_y); _f.setDate(_f.getDate()-6);
-    setDateFrom(_fmtL(_f)); setDateTo(_fmtL(_y)); setPeriodPreset("7d"); setCurrentPage(1);
+    // Padrão: Este Mês — garante que leads de hoje aparecem na lista e barra de meta
+    const _fmtL=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    const _hoje = new Date();
+    const _inicioMes = new Date(_hoje.getFullYear(), _hoje.getMonth(), 1);
+    setDateFrom(_fmtL(_inicioMes)); setDateTo(_fmtL(_hoje)); setPeriodPreset("this_month"); setCurrentPage(1);
     if (cliente.meta_ad_account_id && operacaoAtiva) {
       // Quando há Meta configurado: o sync já faz fetchLeads internamente após upsert.
       // Não chamamos fetchLeads separado para evitar race condition (fetch rápido sobrescreve sync).
