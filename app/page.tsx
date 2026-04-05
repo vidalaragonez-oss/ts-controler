@@ -2850,6 +2850,12 @@ function normalizeCliente(raw: Record<string, unknown>): Cliente {
     meta_leads_cache:   raw.meta_leads_cache != null ? Number(raw.meta_leads_cache) : null,
     meta_cpl_cache:     raw.meta_cpl_cache   != null ? Number(raw.meta_cpl_cache)   : null,
     meta_last_sync:     (raw.meta_last_sync  as string) ?? null,
+    // Blacklist de campanhas ignoradas nas métricas
+    meta_ignored_campaigns: Array.isArray(raw.meta_ignored_campaigns)
+      ? (raw.meta_ignored_campaigns as string[])
+      : typeof raw.meta_ignored_campaigns === "string" && raw.meta_ignored_campaigns.trim()
+        ? JSON.parse(raw.meta_ignored_campaigns)
+        : null,
   } as Cliente;
 }
 
@@ -3063,7 +3069,7 @@ export default function Home() {
     try {
       const { data, error } = await supabase
         .from("clientes")
-        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls, verba_outros, gls_account_id, moeda, meta_spend_cache, meta_leads_cache, meta_cpl_cache, meta_last_sync")
+        .select("id, nome, operacao_id, gestor, gestor_estrategico, platforms, status, created_at, ordem, tipo_campanha, alerta_pagamento, meta_ad_account_id, meta_access_token, meta_status, meta_leads_mensal, verba_meta_ads, verba_gls, verba_outros, gls_account_id, moeda, meta_spend_cache, meta_leads_cache, meta_cpl_cache, meta_last_sync, meta_ignored_campaigns")
         .eq("operacao_id",operacaoId)
         .order("ordem",{ascending:true,nullsFirst:false})
         .order("created_at",{ascending:false});
