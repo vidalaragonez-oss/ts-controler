@@ -13,8 +13,8 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
-  Layers,
   Loader2,
+  LogOut,
   RefreshCw,
   Target,
   TrendingDown,
@@ -152,6 +152,14 @@ export default function DiretoriaPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [sort, setSort]               = useState<{ key: string; asc: boolean }>({ key: "saude", asc: true });
   const [mostrarVerdes, setMostrarVerdes] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  // Scroll-to-top listener
+  useEffect(() => {
+    const onScroll = () => setShowScrollTop(window.scrollY > 300);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -317,9 +325,20 @@ export default function DiretoriaPage() {
     );
   }
 
+  // ─── Logoff ──────────────────────────────────────────────────────────────────
+  const handleLogout = async () => {
+    try {
+      const sb = createClient();
+      await sb.auth.signOut();
+    } catch { /* ignora */ } finally {
+      router.push("/login");
+      router.refresh();
+    }
+  };
+
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#111010] text-[#e8e2d8] flex flex-col">
+    <div className="min-h-screen overflow-y-auto bg-[#0a0a0a] text-[#e8e2d8] flex flex-col pb-20">
 
       {/* ── Header ── */}
       <header className="shrink-0 border-b border-[#2e2c29] bg-[#111010] px-4 md:px-8 py-3 flex items-center justify-between gap-4 sticky top-0 z-40">
@@ -328,7 +347,7 @@ export default function DiretoriaPage() {
             onClick={() => router.push("/")}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-[#e8e2d8] hover:border-[#7a7268] transition-colors"
           >
-            <ArrowLeft size={13} /> Voltar
+            <ArrowLeft size={13} /> <span className="hidden sm:inline">Voltar para Operação</span><span className="sm:hidden">Voltar</span>
           </button>
           <div>
             <p className="text-[0.6rem] font-bold uppercase tracking-[0.18em] text-violet-400">Visão Executiva</p>
@@ -364,6 +383,19 @@ export default function DiretoriaPage() {
             <span className="hidden sm:inline">
               {lastRefresh ? lastRefresh.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "Atualizar"}
             </span>
+          </button>
+
+          {/* Separador */}
+          <div className="w-px h-5 bg-[#2e2c29] hidden sm:block" />
+
+          {/* Logoff */}
+          <button
+            onClick={handleLogout}
+            title={`Sair (${perfil?.nome ?? ""})`}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#201f1d] border border-[#2e2c29] text-[#7a7268] text-xs font-semibold hover:text-red-400 hover:border-red-500/40 transition-colors group"
+          >
+            <LogOut size={13} className="transition-transform group-hover:translate-x-0.5" />
+            <span className="hidden sm:inline">Sair</span>
           </button>
         </div>
       </header>
@@ -513,6 +545,17 @@ export default function DiretoriaPage() {
           TS HUB · Dashboard da Diretoria · Dados do mês corrente (D-1) + Cache Meta Ads
         </p>
       </footer>
+
+      {/* Botão Flutuante: Voltar ao Topo */}
+      {showScrollTop && (
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          className="fixed bottom-6 right-6 z-50 w-11 h-11 flex items-center justify-center rounded-full bg-violet-500 text-white shadow-[0_4px_20px_rgba(139,92,246,0.4)] hover:bg-violet-400 hover:-translate-y-1 transition-all animate-in fade-in slide-in-from-bottom-4 duration-300"
+          title="Voltar ao topo"
+        >
+          <ChevronUp size={20} />
+        </button>
+      )}
     </div>
   );
 }
