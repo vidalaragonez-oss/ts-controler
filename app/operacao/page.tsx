@@ -1691,17 +1691,11 @@ function ClientCard({ client, onSelect, onEdit, onDeactivate, onDelete, onToggle
       </div>
 
       {/* Row 3 — MetaGoalBar ancorada acima do rodapé (só aparece se tiver meta) */}
-      {temMeta && (() => {
-        // Usa cache do mês corrente (meta_leads_cache) gravado pelo cron.
-        // Fallback: banco local (uploads CSV). Nunca chama a API no carregamento.
-        const cacheLeads = client.meta_leads_cache ?? 0;
-        const totalResultados = cacheLeads > 0 ? cacheLeads : (leadsDoMes ?? 0);
-        return (
-          <div className="shrink-0 mt-1">
-            <MetaGoalBar meta={client.meta_leads_mensal!} leadsDoMes={totalResultados} />
-          </div>
-        );
-      })()}
+      {temMeta && (
+        <div className="shrink-0 mt-1">
+          <MetaGoalBar meta={client.meta_leads_mensal!} leadsDoMes={leadsDoMes ?? 0} />
+        </div>
+      )}
 
       {/* Row 4 — Gestores + Data (sempre no rodapé) */}
       <div className="flex items-center gap-2 flex-wrap border-t border-[#2e2c29]/50 pt-2 mt-2 shrink-0">
@@ -3110,30 +3104,28 @@ function OperacaoContent() {
       const now     = new Date();
       const ano     = now.getFullYear();
       const mes     = now.getMonth(); // 0-based
-      const diaHoje = now.getDate();
 
       // Início do mês vigente
       const mesInicio = new Date(ano, mes, 1).toISOString().slice(0, 10);
-
-      // Limite superior: D-1 (dados consolidados até ontem).
-      // Se hoje for dia 1, ontem pertence ao mês anterior — leads do mês atual = 0.
-      let ontem: string;
-      if (diaHoje === 1) {
-        ontem = new Date(ano, mes, 0).toISOString().slice(0, 10); // último dia do mês anterior
-      } else {
-        ontem = new Date(ano, mes, diaHoje - 1).toISOString().slice(0, 10);
-      }
+      // Fim do mês vigente (para capturar todos os leads do mês corrente)
+      const mesFim = new Date(ano, mes + 1, 0).toISOString().slice(0, 10);
 
       const { data, error } = await supabase
         .from("leads")
-        .select("cliente, data")
+        .select("cliente, data, plataforma, meta_lead_id")
         .in("cliente", clienteIds)
         .gte("data", mesInicio)
-        .lte("data", ontem); // apenas leads consolidados até D-1
+        .lte("data", mesFim);
       if (error) throw error;
       const counts: Record<string, number> = {};
-      for (const row of (data ?? []) as { cliente: string; data: string }[]) {
-        if (row.cliente) counts[row.cliente] = (counts[row.cliente] ?? 0) + 1;
+      for (const row of (data ?? []) as { cliente: string; data: string; plataforma: string; meta_lead_id: string | null }[]) {
+        if (!row.cliente) continue;
+        // DNA de Lead: Meta → apenas messaging_first_reply ou lead (via meta_lead_id presente)
+        // Manual/CSV → conta sempre
+        const plat = (row.plataforma ?? "").toLowerCase();
+        const isMeta = plat.includes("meta");
+        if (isMeta && !row.meta_lead_id) continue; // Meta orgânico sem ID → ignora
+        counts[row.cliente] = (counts[row.cliente] ?? 0) + 1;
       }
       setLeadsDoMesPorCliente(counts);
     } catch {
@@ -4218,14 +4210,25 @@ function OperacaoContent() {
                     );
                   })()}
 
-                  {/* ── Barra de Meta Mensal no detalhe (base D-1) ── */}
+                  {/* ── Barra de Meta Mensal no detalhe (real-time via allLeadsForDashboard) ── */}
                   {clienteAtivo.meta_leads_mensal != null && clienteAtivo.meta_leads_mensal > 0 && (() => {
-                    const leadsDoMes = leadsDoMesPorCliente[clienteAtivo.id] ?? 0;
-                    const cacheLeads = clienteAtivo.meta_leads_cache ?? 0;
-                    const totalResultados = cacheLeads > 0 ? cacheLeads : leadsDoMes;
+                    const now = new Date();
+                    const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1);
+                    const mesFim    = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                    mesFim.setHours(23, 59, 59, 999);
+                    // Conta apenas leads do mês corrente com DNA de lead válido
+                    const leadsDoMesRealTime = allLeadsForDashboard.filter(l => {
+                      const d = parseDMY(l.data ?? "");
+                      if (!d || d < mesInicio || d > mesFim) return false;
+                      const plat = (l.plataforma ?? "").toLowerCase();
+                      const isMeta = plat.includes("meta");
+                      // Meta: apenas leads com meta_lead_id (messaging_first_reply/lead)
+                      if (isMeta && !l.meta_lead_id) return false;
+                      return true;
+                    }).length;
                     return (
                       <div className="mt-1">
-                        <MetaGoalBar meta={clienteAtivo.meta_leads_mensal} leadsDoMes={totalResultados} />
+                        <MetaGoalBar meta={clienteAtivo.meta_leads_mensal} leadsDoMes={leadsDoMesRealTime} />
                       </div>
                     );
                   })()}
