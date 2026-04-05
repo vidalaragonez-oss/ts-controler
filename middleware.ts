@@ -1,4 +1,4 @@
-// middleware.ts  ← na raiz do projeto, ao lado de next.config.js
+// middleware.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
@@ -28,27 +28,25 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Verifica sessão ativa (também atualiza o cookie de refresh automaticamente)
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
+  const { data: { session } } = await supabase.auth.getSession();
   const { pathname } = request.nextUrl;
 
-  // Sem sessão tentando acessar raiz → manda para /login
-  if (!session && pathname === "/") {
+  const protectedPaths = ["/hub", "/operacao", "/diretoria"];
+  const isProtected = protectedPaths.some(p => pathname.startsWith(p));
+
+  // Sem sessão tentando acessar rota protegida → /login
+  if (!session && isProtected) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Com sessão tentando acessar /login → manda para raiz
+  // Com sessão tentando acessar /login → /hub
   if (session && pathname === "/login") {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/hub", request.url));
   }
 
   return response;
 }
 
-// Define quais rotas passam pelo middleware
 export const config = {
-  matcher: ["/", "/login"],
+  matcher: ["/", "/login", "/hub", "/hub/:path*", "/operacao", "/operacao/:path*", "/diretoria", "/diretoria/:path*"],
 };
